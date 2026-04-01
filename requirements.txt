@@ -1,8 +1,8 @@
-telethon==1.35.0
-python-dotenv==1.0.1
-aiogram==3.10.0
-fastapi==0.112.0
-uvicorn==0.30.0
-aiohttp==3.10.0
-pydantic==2.8.0
-async-lru==2.0.4
+telethon==1.42.0
+aiogram==3.26.0
+fastapi==0.135.2
+uvicorn==0.42.0
+python-dotenv==1.2.2
+aiohttp==3.13.5
+pydantic==2.12.5
+async-lru==2.3.0
