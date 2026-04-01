@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  core_bot:
+    build: .
+    container_name: core_userbot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./sessions:/app/sessions
+    ports:
+      - "${MANAGER_API_PORT:-8000}:8000"
+      - "${BOT_WEBHOOK_PORT:-8001}:8001"
