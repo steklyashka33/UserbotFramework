@@ -10,7 +10,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiohttp import web
 
-# ISOLATION: Get MVP root for imports
+# ISOLATION: Get CoreUserbot root for imports
 BASE_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BASE_DIR))
 
@@ -22,7 +22,7 @@ from shared.logging_utils import setup_logger
 # Log configuration
 logger = setup_logger("BOT")
 
-# Load settings from the local .env in the MVP root
+# Load settings from the local .env in the CoreUserbot root
 load_dotenv(BASE_DIR / ".env", override=True)
 BOT_TOKEN = os.getenv("API_TOKEN", "")
 
@@ -38,7 +38,45 @@ async def webhook_handler(request: web.Request):
     session_id = data.get("session_id")
 
     if event == "SESSION_DIED":
-        logger.warning(f"Userbot session {session_id} died!")
+        reason = data.get("reason")
+        logger.warning(f"Userbot session {session_id} died! Reason: {reason}")
+        
+        try:
+            user_id = int(session_id)
+            
+            # Human-friendly messages instead of technical reasons
+            if reason == "login_incomplete":
+                friendly_msg = (
+                    "⏳ **Authorization was not completed.**\n\n"
+                    "It looks like you started logging in but didn't enter the code or cloud password (2FA) in time. "
+                    "The session was automatically deleted for your security.\n\n"
+                    "Try logging in again through the menu."
+                )
+            elif reason == "auth_revoked":
+                friendly_msg = (
+                    "ℹ️ **Session has been terminated!**\n\n"
+                    "This happened because you selected 'Terminate other sessions' in Telegram settings "
+                    "or the account was unlinked programmatically.\n\n"
+                    "You can log in again at any time through the menu."
+                )
+            elif reason == "banned":
+                friendly_msg = (
+                    "⚠️ **Account has been disabled by Telegram servers!**\n\n"
+                    "It seems the session was forcibly terminated or the account was banned. "
+                    "This usually happens due to suspicious activity.\n\n"
+                    "We recommend using only clean, aged accounts."
+                )
+            else:
+                friendly_msg = (
+                    "❓ **Your userbot session has been stopped.**\n\n"
+                    "An unexpected termination occurred.\n\n"
+                    "Please try logging in again."
+                )
+
+            await bot.send_message(user_id, friendly_msg, parse_mode="Markdown")
+            logger.info(f"User {user_id} notified about session status ({reason}).")
+        except Exception as e:
+            logger.error(f"Could not notify user {session_id}: {type(e).__name__} - {e}")
         
     return web.json_response({"status": "ok"})
 

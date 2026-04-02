@@ -76,8 +76,17 @@ class Account:
                         raise # Throw to the main monitor except
                 
                 # Request state (fast request). Returns False if authorization is lost.
-                if not await self.client.is_user_authorized():
-                    await self._handle_death(reason="auth_revoked")
+                authorized = await self.client.is_user_authorized()
+                if not authorized:
+                    # Logic: if we are in the loop, we were supposedly running.
+                    # If we can't get 'me', it means the session data exists but isn't valid.
+                    try:
+                        me = await self.client.get_me()
+                        reason = "auth_revoked" if me else "login_incomplete"
+                    except:
+                        reason = "login_incomplete"
+                        
+                    await self._handle_death(reason=reason)
                     break
 
             except (ConnectionError, asyncio.TimeoutError, OSError, asyncio.IncompleteReadError) as e:
@@ -106,8 +115,8 @@ class Account:
         self.is_running = False
         logger.warning(f"Session {self.session_id} died. Reason: {reason}. Sending Webhook to Bot.")
         
-        # If the session died due to key revocation, delete the file so it wouldn't load again
-        if reason in ["auth_revoked", "banned"]:
+        # If the session died due to key revocation or incomplete login, delete the file so it wouldn't load again
+        if reason in ["auth_revoked", "banned", "login_incomplete"]:
             try:
                 await self.client.disconnect()
                 session_file = BASE_DIR / "sessions" / f"{self.session_id}.session"
@@ -117,13 +126,21 @@ class Account:
             except Exception as e:
                 logger.error(f"Failed to delete session file {self.session_id}: {type(e).__name__} - {e}")
 
-        try:
-            async with aiohttp.ClientSession() as session:
-                payload = {"event": "SESSION_DIED", "session_id": self.session_id, "reason": reason}
-                async with session.post(BOT_WEBHOOK_URL, json=payload) as resp:
-                    pass # Webhook sent successfully
-        except Exception as e:
-            logger.error(f"Failed to send Webhook for session {self.session_id}: {type(e).__name__} - {e}")
+        # Retry loop for Webhook (essential during cold start when Bot is warming up)
+        for attempt in range(10):
+            try:
+                async with aiohttp.ClientSession() as session:
+                    payload = {"event": "SESSION_DIED", "session_id": self.session_id, "reason": reason}
+                    async with session.post(BOT_WEBHOOK_URL, json=payload, timeout=2.0) as resp:
+                        if resp.status == 200:
+                            logger.info(f"Webhook delivered for session {self.session_id} (Attempt {attempt+1})")
+                            return # Terminate on success
+                break
+            except Exception as e:
+                if attempt < 9:
+                    await asyncio.sleep(5) # Wait for Bot to wake up
+                    continue
+                logger.error(f"Failed to send Webhook for session {self.session_id} after 10 attempts: {type(e).__name__} - {e}")
 
     async def stop(self):
         """Forcible session stop."""
