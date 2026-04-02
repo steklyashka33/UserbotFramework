@@ -6,7 +6,12 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from dotenv import load_dotenv
-from telethon.errors import SessionPasswordNeededError
+from telethon.errors import (
+    SessionPasswordNeededError, 
+    PhoneCodeInvalidError, 
+    PhoneCodeExpiredError,
+    PasswordHashInvalidError
+)
 from contextlib import asynccontextmanager
 
 # ISOLATION: Locate MVP root for 'shared' imports
@@ -58,7 +63,7 @@ async def _load_accounts_bg():
             if file.endswith(".session"):
                 session_id = file.replace(".session", "")
                 try:
-                    acc = Account(session_id, API_ID, API_HASH)
+                    acc = Account(session_id, API_ID, API_HASH, on_death=lambda sid: accounts.pop(sid, None))
                     accounts[session_id] = acc
                     await acc.start_monitoring()
                     loaded_count += 1
@@ -84,7 +89,12 @@ class SendMessageRequest(BaseModel):
 
 @app.post("/api/auth/send_code")
 async def send_code(req: PhoneRequest):
-    acc = Account(req.session_id, API_ID, API_HASH)
+    # Stop old session if exists to prevent background task conflicts during re-login
+    old_acc = accounts.get(req.session_id)
+    if old_acc:
+        await old_acc.stop()
+        
+    acc = Account(req.session_id, API_ID, API_HASH, on_death=lambda sid: accounts.pop(sid, None))
     accounts[req.session_id] = acc
     try:
         if not acc.client.is_connected():
@@ -109,6 +119,12 @@ async def login(req: LoginRequest):
         return {"status": "success", "id": me.id, "username": me.username}
     except SessionPasswordNeededError:
         raise HTTPException(status_code=401, detail="PASSWORD_NEEDED")
+    except PhoneCodeInvalidError:
+        raise HTTPException(status_code=400, detail="PHONE_CODE_INVALID")
+    except PhoneCodeExpiredError:
+        raise HTTPException(status_code=400, detail="PHONE_CODE_EXPIRED")
+    except PasswordHashInvalidError:
+        raise HTTPException(status_code=400, detail="PASSWORD_INVALID")
     except Exception as e:
         logger.error(f"LOGIN FAILED for {req.session_id}: {type(e).__name__} - {e}")
         raise HTTPException(status_code=400, detail=str(e))
@@ -127,9 +143,25 @@ async def get_status(session_id: str):
 
 @app.get("/api/sessions")
 async def list_sessions():
-    dead_sessions = [sid for sid, a in accounts.items() if not a.is_running and not a.client.is_connected()]
-    for sid in dead_sessions: accounts.pop(sid, None)
-    return {"sessions": [{"session_id": sid, "is_running": a.is_running, "is_connected": a.client.is_connected()} for sid, a in accounts.items()]}
+    """List all accounts and clean up those that died."""
+    # Build a list of truly dead sessions to remove them from memory
+    dead_ids = []
+    for sid, acc in accounts.items():
+        if not acc.is_running:
+            dead_ids.append(sid)
+            
+    for sid in dead_ids:
+        accounts.pop(sid, None)
+        
+    return {
+        "sessions": [
+            {
+                "session_id": sid, 
+                "is_running": a.is_running, 
+                "is_connected": a.client.is_connected()
+            } for sid, a in accounts.items()
+        ]
+    }
 
 @app.post("/api/sessions/{session_id}/action/send_message")
 async def send_message_task(session_id: str, req: SendMessageRequest):
@@ -179,6 +211,11 @@ async def session_info(session_id: str):
             raise HTTPException(status_code=401, detail="AUTH_REVOKED")
         
         me = await acc.client.get_me()
+        if not me:
+            # If get_me returns None, authorization is lost. 
+            # We don't trigger death cleanup here anymore, let the monitoring loop handle it.
+            raise HTTPException(status_code=401, detail="AUTH_REVOKED")
+
         return {
             "id": me.id,
             "username": me.username,

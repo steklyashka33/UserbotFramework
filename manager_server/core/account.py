@@ -23,10 +23,11 @@ class Account:
     """Client wrapper for continuous operation in memory."""
     GLOBAL_NETWORK_OK = True # Global flag for all sessions
     
-    def __init__(self, session_id: str, api_id: int, api_hash: str):
+    def __init__(self, session_id: str, api_id: int, api_hash: str, on_death=None):
         self.session_id = str(session_id)
         self.api_id = api_id
         self.api_hash = api_hash
+        self.on_death = on_death
         
         # Ensure that the sessions folder exists
         session_dir = BASE_DIR / "sessions"
@@ -56,12 +57,9 @@ class Account:
 
     async def _monitoring_loop(self):
         """Check health every 10 seconds. Filter out internet connection issues."""
-        from telethon.errors import AuthKeyUnregisteredError, SessionRevokedError, UserDeactivatedError, UserDeactivatedBanError
-        import asyncio
-
         while self.is_running:
             try:
-                # If connection is lost - just try to reconnect without "killing" the session
+                # 1. Connection check (network layer)
                 if not self.client.is_connected():
                     try:
                         # Limit the ENTIRE connection process (DNS + TCP + Handshake)
@@ -71,60 +69,97 @@ class Account:
                             logger.info("Connection to Telegram restored! Sessions are resuming work.")
                             Account.GLOBAL_NETWORK_OK = True
                     except (asyncio.TimeoutError, ConnectionError, OSError, asyncio.IncompleteReadError) as e:
-                        # IMPORTANT: If the connection "hangs" or drops on the read phase
                         await self.client.disconnect()
-                        raise # Throw to the main monitor except
-                
-                # Request state (fast request). Returns False if authorization is lost.
-                authorized = await self.client.is_user_authorized()
-                if not authorized:
-                    # Logic: if we are in the loop, we were supposedly running.
-                    # If we can't get 'me', it means the session data exists but isn't valid.
-                    try:
-                        me = await self.client.get_me()
-                        reason = "auth_revoked" if me else "login_incomplete"
-                    except:
-                        reason = "login_incomplete"
-                        
-                    await self._handle_death(reason=reason)
+                        raise # Catch in network block below
+
+                # 2. Auth/Account health check (logic layer)
+                if await self.ensure_alive():
                     break
 
             except (ConnectionError, asyncio.TimeoutError, OSError, asyncio.IncompleteReadError) as e:
-                # Internet issues (e.g. VPN turned off)
+                # Local or global network issues (VPN, API down, timeout)
                 if Account.GLOBAL_NETWORK_OK:
                     logger.warning(f"Connection to Telegram lost ({type(e).__name__}). All sessions go into wait mode...")
                     Account.GLOBAL_NETWORK_OK = False
                 await asyncio.sleep(CONNECTION_CHECK_DELAY)
                 continue
-            except (AuthKeyUnregisteredError, SessionRevokedError, UserDeactivatedError, UserDeactivatedBanError) as e:
-                # Telegram server forcibly terminated our session!
-                logger.error(f"Telegram server kicked session {self.session_id}: {type(e).__name__} - {e}")
-                await self._handle_death(reason="banned")
-                break
             except Exception as e:
-                # Crash due to an unexpected server error
-                logger.error(f"Unexpected health check failure for session {self.session_id}: {type(e).__name__} - {e}")
-                if "AuthKey" in str(e) or "Deactivated" in str(e) or "Revoked" in str(e):
-                    await self._handle_death(reason="banned")
-                    break
+                # Critical bug or unexpected Telethon behavior
+                logger.error(f"Critical error in monitoring loop for {self.session_id}: {type(e).__name__} - {e}")
                 
             await asyncio.sleep(CONNECTION_CHECK_DELAY)
 
+    async def _check_death_reason(self):
+        """
+        Internal check: returns False if alive, or reason string if dead.
+        Handles both passive checks (get_me) and catching explicit Telethon death errors.
+        """
+        from telethon.errors import (
+            AuthKeyUnregisteredError, SessionRevokedError, 
+            UserDeactivatedError, UserDeactivatedBanError
+        )
+        try:
+            me = await self.client.get_me()
+            if me is None:
+                # If key exists but user data is inaccessible - it's revoked
+                if await self.client.is_user_authorized():
+                    return "auth_revoked"
+                else:
+                    return "login_incomplete"
+            return False # Session is alive
+        except (UserDeactivatedError, UserDeactivatedBanError):
+            return "banned"
+        except (AuthKeyUnregisteredError, SessionRevokedError):
+            return "auth_revoked"
+        except Exception as e:
+            # Check for death keywords in generic strings
+            err_str = str(e).lower()
+            if any(k in err_str for k in ["deactivated", "banned"]): return "banned"
+            if any(k in err_str for k in ["auth", "revoked", "unregistered"]): return "auth_revoked"
+            # It's some other non-critical error, let the loop continue
+            return False
+
+    async def ensure_alive(self) -> bool:
+        """
+        Active check: returns True if DIED and cleanup performed, False if still alive.
+        Centralizes the logic for both checking and handling death.
+        """
+        death_reason = await self._check_death_reason()
+        if death_reason:
+            await self._handle_death(reason=death_reason)
+            return True
+        return False
+
     async def _handle_death(self, reason=None):
         """Session death. Notify the bot via Webhook and delete files."""
-        self.is_running = False
-        logger.warning(f"Session {self.session_id} died. Reason: {reason}. Sending Webhook to Bot.")
+        if not self.is_running and reason != "login_incomplete": return # Avoid double death
         
-        # If the session died due to key revocation or incomplete login, delete the file so it wouldn't load again
+        self.is_running = False
+        
+        # Stop monitoring task if it's not the one calling this
+        if self._monitor_task and asyncio.current_task() != self._monitor_task:
+            self._monitor_task.cancel()
+            
+        logger.warning(f"Session {self.session_id} died. Reason: {reason}. Cleaning up.")
+        
+        # Cleanup files and logout if possible
         if reason in ["auth_revoked", "banned", "login_incomplete"]:
             try:
+                # Try to log out first to remove from active devices (if not banned)
+                if reason != "banned":
+                    try:
+                        if not self.client.is_connected():
+                            await asyncio.wait_for(self.client.connect(), timeout=5.0)
+                        await asyncio.wait_for(self.client.log_out(), timeout=5.0)
+                    except (asyncio.TimeoutError, ConnectionError, OSError, Exception):
+                        pass # Best-effort logout — ignore all errors during dead session cleanup
+                
                 await self.client.disconnect()
                 session_file = BASE_DIR / "sessions" / f"{self.session_id}.session"
                 if os.path.exists(session_file):
                     os.remove(session_file)
-                    logger.info(f"Dead session file {self.session_id} permanently deleted.")
             except Exception as e:
-                logger.error(f"Failed to delete session file {self.session_id}: {type(e).__name__} - {e}")
+                logger.error(f"Failed to cleanup dead session {self.session_id}: {type(e).__name__} - {e}")
 
         # Retry loop for Webhook (essential during cold start when Bot is warming up)
         for attempt in range(10):
@@ -141,6 +176,15 @@ class Account:
                     await asyncio.sleep(5) # Wait for Bot to wake up
                     continue
                 logger.error(f"Failed to send Webhook for session {self.session_id} after 10 attempts: {type(e).__name__} - {e}")
+
+        # Final step: notify the manager to remove this object from memory
+        if self.on_death:
+            try:
+                if asyncio.iscoroutinefunction(self.on_death):
+                    asyncio.create_task(self.on_death(self.session_id))
+                else:
+                    self.on_death(self.session_id)
+            except: pass
 
     async def stop(self):
         """Forcible session stop."""
@@ -159,8 +203,8 @@ class Account:
         
         try:
             if not self.client.is_connected():
-                await self.client.connect()
-            await self.client.log_out()
+                await asyncio.wait_for(self.client.connect(), timeout=7.0)
+            await asyncio.wait_for(self.client.log_out(), timeout=7.0)
         except Exception as e:
             logger.error(f"Error logging out of account {self.session_id}: {type(e).__name__} - {e}")
         finally:
