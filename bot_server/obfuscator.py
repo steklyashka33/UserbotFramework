@@ -4,26 +4,26 @@ import random
 # Each letter has multiple variants so phrases are always different
 DEEP_UNICODE = {
     # Cyrillic
-    'а': ['a', '𝖺', 'ａ', 'а', 'ɑ', 'α'], 
+    'а': ['a', '𝖺', 'а', 'ɑ', 'α'], 
     'е': ['e', 'е', 'е', '𝖾', 'е', 'е'],
     'о': ['o', 'ο', 'о', 'о', 'о', 'о'],
     'р': ['p', 'р', 'р', 'р', 'р', 'р'],
     'с': ['c', 'с', 'с', 'с', 'с', 'с'],
     'у': ['y', 'у', 'у', 'у', 'у', 'у'],
     'х': ['x', 'х', 'х', 'х', 'х', 'х'],
-    'к': ['k', 'κ', '𝗄', 'ｋ'],
+    'к': ['k', 'κ', '𝗄'],
     'д': ['д', 'д', 'д'], 
     
     # English (Latin)
-    'a': ['а', '𝖺', 'ａ', 'α', 'ɑ'],
-    'e': ['е', '𝖾', 'ｅ', 'ε', 'е'],
-    'o': ['о', '𝗈', 'ｏ', 'ο', 'о'],
-    'p': ['р', '𝗉', 'ｐ', 'ρ', 'р'],
+    'a': ['а', '𝖺', 'α', 'ɑ'],
+    'e': ['е', '𝖾', 'ε', 'е'],
+    'o': ['о', '𝗈', 'ο', 'о'],
+    'p': ['р', '𝗉', 'ρ', 'р'],
     'c': ['с', 'с', 'ⅽ', 'с'],
-    'y': ['у', '𝗒', 'ｙ', 'γ', 'у'],
-    'x': ['х', '𝗑', 'ｘ', 'χ', 'х'],
-    'i': ['і', '𝗂', 'ｉ', 'ɩ', 'і'],
-    's': ['ѕ', '𝗌', 'ｓ', 'ʂ', 'ѕ'],
+    'y': ['у', '𝗒', 'γ', 'у'],
+    'x': ['х', '𝗑', 'χ', 'х'],
+    'i': ['і', '𝗂', 'ɩ', 'і'],
+    's': ['ѕ', '𝗌', 'ѕ'],
 }
 
 # Zero Width Space (U+200B) - absolutely invisible and doesn't take space.
@@ -46,10 +46,15 @@ def obfuscate(text: str) -> str:
         start_idx = result_text.lower().find(word)
         while start_idx != -1:
             original_word = result_text[start_idx:start_idx + len(word)]
-            # Insert invisible separator after every character
+            # Insert invisible separator only BETWEEN characters
             broken_word = INVISIBLE_SEPARATOR.join(list(original_word))
+            
+            # If the trigger is at the very start of the text, 
+            # make sure we don't start with a special character if possible,
+            # but join already handles this by putting it between elements.
+            # However, some UI engines fail if the first segment is complex.
+            
             result_text = result_text[:start_idx] + broken_word + result_text[start_idx + len(word):]
-            # Look for the next occurrence, jumping over the broken one
             start_idx = result_text.lower().find(word, start_idx + len(broken_word))
 
     # 2. Character-by-character replacement with visually similar ones from Deep Unicode
