@@ -39,7 +39,7 @@ async def webhook_handler(request: web.Request):
 
     if event == "SESSION_DIED":
         reason = data.get("reason")
-        logger.warning(f"Userbot session {session_id} died! Reason: {reason}")
+        # logger.warning(f"Userbot session {session_id} died! Reason: {reason}")
         
         try:
             user_id = int(session_id)
@@ -74,7 +74,7 @@ async def webhook_handler(request: web.Request):
                 )
 
             await bot.send_message(user_id, friendly_msg, parse_mode="Markdown")
-            logger.info(f"User {user_id} notified about session status ({reason}).")
+            logger.info(f"User {user_id} notified about session status {reason}.")
         except Exception as e:
             logger.error(f"Could not notify user {session_id}: {type(e).__name__} - {e}")
         
