@@ -6,6 +6,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from dotenv import load_dotenv
+from telethon import functions
 from telethon.errors import (
     SessionPasswordNeededError, 
     PhoneCodeInvalidError, 
@@ -20,6 +21,7 @@ sys.path.insert(0, str(BASE_DIR))
 
 # Import from root
 from manager_server.core.account import Account
+from shared.config import HIDE_API_LOGS
 from shared.logging_utils import setup_logger
 
 # Log configuration
@@ -42,6 +44,13 @@ def global_exception_handler(loop, context):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Silence API request logs if requested in config
+    if HIDE_API_LOGS:
+        logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+        logging.getLogger("uvicorn.error").setLevel(logging.WARNING)
+        # Also handle potential direct logging from uvicorn's configuration
+        logging.getLogger("uvicorn").setLevel(logging.WARNING)
+
     loop = asyncio.get_event_loop()
     loop.set_exception_handler(global_exception_handler)
     asyncio.create_task(_load_accounts_bg())
@@ -216,11 +225,28 @@ async def session_info(session_id: str):
             # We don't trigger death cleanup here anymore, let the monitoring loop handle it.
             raise HTTPException(status_code=401, detail="AUTH_REVOKED")
 
+        authorizations = await acc.client(functions.account.GetAuthorizationsRequest())
+        auth_list = []
+        for auth in authorizations.authorizations:
+            auth_list.append({
+                "device_model": auth.device_model,
+                "platform": auth.platform,
+                "system_version": auth.system_version,
+                "app_name": auth.app_name,
+                "app_version": auth.app_version,
+                "date_active": auth.date_active.strftime("%Y-%m-%d %H:%M:%S") if auth.date_active else "unknown",
+                "ip": auth.ip,
+                "country": auth.country,
+                "official_app": auth.official_app, 
+                "current": auth.current
+            })
+
         return {
             "id": me.id,
             "username": me.username,
             "first_name": me.first_name,
-            "phone": me.phone
+            "phone": me.phone,
+            "sessions": auth_list,
         }
     except Exception as e:
         logger.error(f"Failed to get info for session {session_id}: {type(e).__name__} - {e}")
@@ -249,5 +275,8 @@ async def logout_session(session_id: str):
 if __name__ == "__main__":
     import uvicorn
     os.makedirs(BASE_DIR / "sessions", exist_ok=True)
-    from shared.config import MANAGER_PORT
-    uvicorn.run(app, host="127.0.0.1", port=int(MANAGER_PORT))
+    from shared.config import MANAGER_PORT, HIDE_API_LOGS
+    
+    # Apply log level directly to uvicorn to catch startup logs
+    log_level = "warning" if HIDE_API_LOGS else "info"
+    uvicorn.run(app, host="127.0.0.1", port=int(MANAGER_PORT), log_level=log_level)

@@ -16,7 +16,7 @@ sys.path.insert(0, str(BASE_DIR))
 
 # Import from root
 from bot_server import handlers
-from shared.config import BOT_PORT
+from shared.config import BOT_PORT, HIDE_API_LOGS
 from shared.logging_utils import setup_logger
 
 # Log configuration
@@ -91,9 +91,13 @@ async def start_webhook_listener():
 
 async def main():
     """Start bot with an infinite connection loop on network failures."""
-    # Disable "scary" aiohttp/aiogram logs on disconnects
-    logging.getLogger('aiogram').setLevel(logging.CRITICAL)
-    logging.getLogger('aiohttp').setLevel(logging.CRITICAL)
+    # Manage detail levels for network/API logs
+    if HIDE_API_LOGS:
+        logging.getLogger('aiogram').setLevel(logging.CRITICAL)
+        logging.getLogger('aiohttp').setLevel(logging.CRITICAL)
+    else:
+        logging.getLogger('aiogram').setLevel(logging.WARNING)
+        logging.getLogger('aiohttp').setLevel(logging.WARNING)
 
     # Start manager webhook listener ONLY ONCE
     try:
@@ -108,8 +112,8 @@ async def main():
             logger.info(f"Bot successfully authorized: @{bot_info.username}")
             
             logger.info("Bot Server started. Waiting for commands...")
-            # Drop pending updates and start polling
-            await bot.delete_webhook(drop_pending_updates=True)
+            # Process pending updates and start polling
+            await bot.delete_webhook(drop_pending_updates=False)
             await dp.start_polling(bot)
             break 
 
