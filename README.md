@@ -74,8 +74,9 @@
 | `API_ID` | Telegram API ID from my.telegram.org |
 | `API_HASH` | Telegram API Hash from my.telegram.org |
 | `API_TOKEN` | Bot API Token from @BotFather |
-| `MANAGER_API_PORT` | Optional: Port for Manager (default: 8000) |
-| `BOT_WEBHOOK_PORT`| Optional: Port for Webhooks (default: 8001) |
+
+> [!NOTE]
+> Other settings (ports, feature flags) are configured directly in [shared/config.py](shared/config.py).
 
 ---
 
