@@ -48,12 +48,72 @@ class Account:
         )
         self.is_running = False
         self._monitor_task = None
+        self._warm_up_task = None
         self._network_warning_sent = False # Flag to avoid spamming logs
 
+    def _shutdown(self):
+        """
+        Stop the session and cancel all background tasks.
+        """
+        self.is_running = False
+        current = asyncio.current_task()
+        for task in (self._monitor_task, self._warm_up_task):
+            if task and not task.done() and task is not current:
+                task.cancel()
+
+
+    async def warm_up(self):
+        """
+        Imitate real Telegram client behavior right after login with gradual delays.
+        Official apps execute this chain: GetConfig -> GetAppConfig -> GetPrivacy -> GetNotifySettings.
+        """
+        from telethon import functions, types
+        import random
+
+        # Initial wait to let the session stabilize
+        await asyncio.sleep(random.uniform(3, 7))
+
+        steps = [
+            ("GetConfig", lambda: functions.help.GetConfigRequest()),
+            ("GetAppConfig", lambda: functions.help.GetAppConfigRequest(hash=0)),
+            ("GetPrivacy", lambda: functions.account.GetPrivacyRequest(
+                key=types.InputPrivacyKeyStatusTimestamp()
+            )),
+            ("GetAuthorizations", lambda: functions.account.GetAuthorizationsRequest()),
+            ("GetNotifySettings", lambda: functions.account.GetNotifySettingsRequest(
+                peer=types.InputNotifyPeer(peer=types.InputPeerSelf())
+            )),
+        ]
+
+        logger.info(f"Starting warm-up routine for {self.session_id}...")
+        
+        for name, build_req in steps:
+            # Check if session was stopped during the process
+            if not self.is_running: 
+                break
+                
+            # Wait for connection if it drops during warm-up
+            try:
+                for _ in range(10): # Max 10 seconds wait
+                    if self.client.is_connected(): break
+                    await asyncio.sleep(1)
+                
+                await self.client(build_req())
+                logger.debug(f"[warm_up] {self.session_id}: {name} OK")
+            except Exception as e:
+                logger.warning(f"[warm_up] {self.session_id}: {name} failed: {type(e).__name__} - {e}")
+            
+            # Gradual human-like delay between actions
+            await asyncio.sleep(random.uniform(2, 5))
+        
+        logger.info(f"Warm-up routine for {self.session_id} completed.")
+
+
     async def start_monitoring(self):
-        """Start Health Check for the session. Connection is inside the loop only!"""
+        """Start Health Check and Warm-up for the session."""
         self.is_running = True
         self._monitor_task = asyncio.create_task(self._monitoring_loop())
+        self._warm_up_task = None
 
     async def _monitoring_loop(self):
         """Check health every 10 seconds. Filter out internet connection issues."""
@@ -75,6 +135,10 @@ class Account:
                 # 2. Auth/Account health check (logic layer)
                 if await self.ensure_alive():
                     break
+
+                if not self._warm_up_task:
+                    # Start warm-up in parallel (it will proceed once connected)
+                    self._warm_up_task = asyncio.create_task(self.warm_up())
 
             except (ConnectionError, asyncio.TimeoutError, OSError, asyncio.IncompleteReadError) as e:
                 # Local or global network issues (VPN, API down, timeout)
@@ -134,11 +198,7 @@ class Account:
         """Session death. Notify the bot via Webhook and delete files."""
         if not self.is_running and reason != "login_incomplete": return # Avoid double death
         
-        self.is_running = False
-        
-        # Stop monitoring task if it's not the one calling this
-        if self._monitor_task and asyncio.current_task() != self._monitor_task:
-            self._monitor_task.cancel()
+        self._shutdown()
             
         logger.warning(f"Session {self.session_id} died. Reason: {reason}. Cleaning up.")
         
@@ -188,18 +248,14 @@ class Account:
 
     async def stop(self):
         """Forcible session stop."""
-        self.is_running = False
-        if self._monitor_task:
-            self._monitor_task.cancel()
+        self._shutdown()
         await self.client.disconnect()
         logger.info(f"Account {self.session_id} stopped manually.")
 
     async def logout(self):
         """Complete session logout and deletion."""
         logger.warning(f"Session {self.session_id} is being logged out manually.")
-        self.is_running = False
-        if self._monitor_task:
-            self._monitor_task.cancel()
+        self._shutdown()
         
         try:
             if not self.client.is_connected():
