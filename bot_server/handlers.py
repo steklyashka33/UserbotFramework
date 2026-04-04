@@ -15,7 +15,7 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 from bot_server.obfuscator import obfuscate
-from shared.config import MANAGER_API_URL
+from shared.config import MANAGER_API_URL, SHOW_ALL_SESSIONS_IN_INFO
 
 router = Router()
 
@@ -258,12 +258,54 @@ async def get_info_cmd(message: Message):
                 if resp.status == 200:
                     data = await resp.json()
                     username = f"@{data.get('username')}" if data.get('username') else "missing"
-                    await message.answer(
-                        f"🆔 Session ID: {data.get('id')}\n"
-                        f"👤 Name: {data.get('first_name')}\n"
-                        f"🔗 Username: {username}\n"
-                        f"📞 Phone: {data.get('phone')}"
+                    
+                    info_text = (
+                        f"🆔 **Session ID:** `{data.get('id')}`\n"
+                        f"👤 **Name:** {data.get('first_name')}\n"
+                        f"🔗 **Username:** {username}\n"
+                        f"📞 **Phone:** {data.get('phone')}\n\n"
                     )
+                    
+                    sessions = data.get("sessions", [])
+                    if sessions:
+                        # 1. Filter current session (always shown)
+                        current_session = next((s for s in sessions if s.get("current")), None)
+                        # 2. Filter other sessions (gated by config)
+                        other_sessions = [s for s in sessions if not s.get("current")]
+                        
+                        displayed_sessions = []
+                        if current_session:
+                            displayed_sessions.append(current_session)
+                        
+                        if SHOW_ALL_SESSIONS_IN_INFO:
+                            displayed_sessions.extend(other_sessions)
+                        
+                        if displayed_sessions:
+                            # Header and separators only shown when listing ALL sessions
+                            if SHOW_ALL_SESSIONS_IN_INFO:
+                                info_text += "📱 **Active Sessions:**\n"
+                            
+                            for s in displayed_sessions:
+                                if SHOW_ALL_SESSIONS_IN_INFO:
+                                    info_text += "━━━━━━━━━━━━━━━\n"
+                                
+                                # "This session" tag only needed when multiple sessions are visible
+                                current_tag = " ✨ This session\n" if s.get("current") else ""
+                                
+                                info_text += (
+                                    f"{current_tag}"
+                                    f"🖥 **Device:** {s.get('device_model')} ({s.get('platform')})\n"
+                                    f"⚙️ **System:** {s.get('system_version')}\n"
+                                    f"📦 **App:** {s.get('app_name')} v{s.get('app_version')}\n"
+                                    f"🌐 **IP:** {s.get('ip')} ({s.get('country')})\n"
+                                    f"💠 **Official:** {'Yes' if s.get('official_app') else 'No'}\n"
+                                    f"🕒 **Last Active:** {s.get('date_active')}\n"
+                                )
+                                # Extra newline between sessions if there are more than one
+                                if SHOW_ALL_SESSIONS_IN_INFO:
+                                    info_text += "\n"
+                    
+                    await message.answer(info_text, parse_mode="Markdown")
                 else:
                     await message.answer(f"Session with ID {session_id} not found or offline.")
         except Exception as e:
