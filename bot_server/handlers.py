@@ -128,6 +128,12 @@ async def process_phone(message: Message, state: FSMContext):
             detail = data.get('detail', 'Unknown error') if data else 'Empty response'
             if detail == "ALREADY_CONNECTED":
                 await wait_msg.answer("✅ Your session is already connected!")
+            elif detail == "SESSION_STOPPED":
+                await wait_msg.answer("⚠️ Your session exists but is currently stopped. Use /logout to remove it, then /login again.")
+            elif detail == "SESSION_NO_NETWORK":
+                await wait_msg.answer("⚠️ Your session is running but Telegram is temporarily unreachable. Please try again in a moment.")
+            elif detail == "FAILED_TO_CONNECT":
+                await wait_msg.answer("❌ Could not connect to Telegram servers. Please check your connection and try /login again.")
             else:
                 await wait_msg.answer(f"Server error: {detail}")
         await state.clear()
