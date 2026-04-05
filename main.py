@@ -10,10 +10,16 @@ logger = setup_logger("SYSTEM_ENGINE")
 
 # ISOLATION: Locate CoreUserbot root for 'shared' imports
 BASE_DIR = Path(__file__).resolve().parent
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
+
+from shared.config import MANAGER_PORT, BOT_PORT
 
 def start_system():
     logger.info("="*30)
     logger.info("CoreUserbot: STARTING")
+    logger.info(f"Manager Service: Port {MANAGER_PORT}")
+    logger.info(f"Bot Service:     Port {BOT_PORT}")
     logger.info("="*30)
 
     # Path to Python interpreter

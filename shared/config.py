@@ -9,6 +9,12 @@ load_dotenv(BASE_DIR / ".env", override=True)
 # Telethon settings, matching the original userbot
 import random
 
+# API credentials
+API_ID = int(os.getenv("API_ID", 0))
+API_HASH = os.getenv("API_HASH", "")
+# Bot Token
+BOT_TOKEN = os.getenv("API_TOKEN", "")
+
 # List of real devices for device masquerading
 DEVICE_MODELS = [
     "Huawei NATCOM N8302",
@@ -37,14 +43,27 @@ DEVICE_CONFIG = {
     "app_version": "12.6.2",
 }
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Network configuration
+# ──────────────────────────────────────────────────────────────────────────────
+# When both Bot and Manager run on the SAME machine (default):
+#   leave both as "127.0.0.1"
+#
+# When Bot and Manager are on DIFFERENT servers:
+#   MANAGER_HOST — IP/hostname of the machine running Manager (seen by the Bot)
+#   BOT_HOST     — IP/hostname of the machine running the Bot (seen by the Manager)
+
+MANAGER_HOST = "127.0.0.1"   # Where Bot sends API requests to Manager
+BOT_HOST     = "127.0.0.1"   # Where Manager sends Webhook notifications to Bot
+
 # Communication ports
 # These define the ports for Manager API and Bot Webhook listener
 MANAGER_PORT = "8000"
-BOT_PORT = "8001"
+BOT_PORT     = "8001"
 
-# API URL
-MANAGER_API_URL = f"http://127.0.0.1:{MANAGER_PORT}"
-BOT_WEBHOOK_URL = f"http://127.0.0.1:{BOT_PORT}/webhook"
+# Assembled URLs (do not change unless you use a custom path or HTTPS proxy)
+MANAGER_API_URL  = f"http://{MANAGER_HOST}:{MANAGER_PORT}"
+BOT_WEBHOOK_URL  = f"http://{BOT_HOST}:{BOT_PORT}/webhook"
 
 # Feature flags
 # Set to True to display ALL active Telegram devices in /info, not just the current session

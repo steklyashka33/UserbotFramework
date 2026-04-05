@@ -5,7 +5,6 @@ import logging
 from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from dotenv import load_dotenv
 from telethon import functions
 from telethon.errors import (
     SessionPasswordNeededError, 
@@ -20,17 +19,12 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BASE_DIR))
 
 # Import from root
-from manager_server.core.account import Account
-from shared.config import HIDE_API_LOGS
+from manager_server.core.account import Account, NETWORK_ERRORS
+from shared.config import HIDE_API_LOGS, API_ID, API_HASH
 from shared.logging_utils import setup_logger
 
 # Log configuration
 logger = setup_logger("MANAGER")
-
-# Load settings from local .env in MVP root
-load_dotenv(BASE_DIR / ".env", override=True)
-API_ID = int(os.getenv("API_ID", 0))
-API_HASH = os.getenv("API_HASH", "")
 
 def global_exception_handler(loop, context):
     """Hide scary internal asyncio/Telethon errors (IncompleteReadError) from the console."""

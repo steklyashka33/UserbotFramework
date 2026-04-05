@@ -3,7 +3,6 @@ import sys
 from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from dotenv import load_dotenv
 
 # ISOLATION: Locate the MVP root for 'shared' imports
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -11,11 +10,7 @@ sys.path.insert(0, str(BASE_DIR))
 
 # Import from the root
 from manager_server.core.account import Account
-
-# Load settings from the local .env in the MVP root
-load_dotenv(BASE_DIR / ".env")
-API_ID = int(os.getenv("API_ID", 0))
-API_HASH = os.getenv("API_HASH", "")
+from shared.config import API_ID, API_HASH
 
 app = FastAPI()
 
