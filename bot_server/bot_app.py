@@ -57,7 +57,7 @@ async def webhook_handler(request: web.Request):
                     "ℹ️ **Session has been terminated!**\n\n"
                     "This happened because you selected 'Terminate other sessions' in Telegram settings "
                     "or the account was unlinked programmatically.\n\n"
-                    "You can log in again at any time through the menu."
+                    "You can /login in again at any time through the menu."
                 )
             elif reason == "banned":
                 friendly_msg = (
