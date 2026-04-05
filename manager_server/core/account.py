@@ -50,16 +50,26 @@ class Account:
         self._monitor_task = None
         self._warm_up_task = None
         self._network_warning_sent = False # Flag to avoid spamming logs
+        self._ready_event = asyncio.Event()
 
     def _shutdown(self):
         """
         Stop the session and cancel all background tasks.
         """
         self.is_running = False
+        self._ready_event.clear()
         current = asyncio.current_task()
         for task in (self._monitor_task, self._warm_up_task):
             if task and not task.done() and task is not current:
                 task.cancel()
+
+    async def wait_until_ready(self, timeout=10.0):
+        """Wait until the session is connected and authorized."""
+        try:
+            await asyncio.wait_for(self._ready_event.wait(), timeout=timeout)
+            return True
+        except asyncio.TimeoutError:
+            return False
 
 
     async def warm_up(self):
@@ -121,6 +131,7 @@ class Account:
             try:
                 # 1. Connection check (network layer)
                 if not self.client.is_connected():
+                    self._ready_event.clear()
                     try:
                         # Limit the ENTIRE connection process (DNS + TCP + Handshake)
                         await asyncio.wait_for(self.client.connect(), timeout=7.0)
@@ -134,7 +145,11 @@ class Account:
 
                 # 2. Auth/Account health check (logic layer)
                 if await self.ensure_alive():
+                    # Account is dead (notified in ensure_alive), stop monitoring
                     break
+                
+                # We are alive and connected
+                self._ready_event.set()
 
                 if not self._warm_up_task:
                     # Start warm-up in parallel (it will proceed once connected)
@@ -142,6 +157,7 @@ class Account:
 
             except (ConnectionError, asyncio.TimeoutError, OSError, asyncio.IncompleteReadError) as e:
                 # Local or global network issues (VPN, API down, timeout)
+                self._ready_event.clear()
                 if Account.GLOBAL_NETWORK_OK:
                     logger.warning(f"Connection to Telegram lost ({type(e).__name__}). All sessions go into wait mode...")
                     Account.GLOBAL_NETWORK_OK = False
@@ -194,32 +210,29 @@ class Account:
             return True
         return False
 
+    def _notify_on_death(self):
+        """Invoke callback to remove account from Manager's memory."""
+        if not self.on_death:
+            return
+            
+        try:
+            if asyncio.iscoroutinefunction(self.on_death):
+                asyncio.create_task(self.on_death(self.session_id))
+            else:
+                self.on_death(self.session_id)
+        except Exception:
+            pass
+
     async def _handle_death(self, reason=None):
         """Session death. Notify the bot via Webhook and delete files."""
         if not self.is_running and reason != "login_incomplete": return # Avoid double death
         
         self._shutdown()
+        self._notify_on_death()
             
         logger.warning(f"Session {self.session_id} died. Reason: {reason}. Cleaning up.")
         
-        # Cleanup files and logout if possible
-        if reason in ["auth_revoked", "banned", "login_incomplete"]:
-            try:
-                # Try to log out first to remove from active devices (if not banned)
-                if reason != "banned":
-                    try:
-                        if not self.client.is_connected():
-                            await asyncio.wait_for(self.client.connect(), timeout=5.0)
-                        await asyncio.wait_for(self.client.log_out(), timeout=5.0)
-                    except (asyncio.TimeoutError, ConnectionError, OSError, Exception):
-                        pass # Best-effort logout — ignore all errors during dead session cleanup
-                
-                await self.client.disconnect()
-                session_file = BASE_DIR / "sessions" / f"{self.session_id}.session"
-                if os.path.exists(session_file):
-                    os.remove(session_file)
-            except Exception as e:
-                logger.error(f"Failed to cleanup dead session {self.session_id}: {type(e).__name__} - {e}")
+        await self._logout()
 
         # Retry loop for Webhook (essential during cold start when Bot is warming up)
         for attempt in range(10):
@@ -228,7 +241,7 @@ class Account:
                     payload = {"event": "SESSION_DIED", "session_id": self.session_id, "reason": reason}
                     async with session.post(BOT_WEBHOOK_URL, json=payload, timeout=2.0) as resp:
                         if resp.status == 200:
-                            logger.info(f"Webhook delivered for session {self.session_id} (Attempt {attempt+1})")
+                            logger.info(f"Webhook delivered for session {self.session_id}")
                             return # Terminate on success
                 break
             except Exception as e:
@@ -236,15 +249,6 @@ class Account:
                     await asyncio.sleep(5) # Wait for Bot to wake up
                     continue
                 logger.error(f"Failed to send Webhook for session {self.session_id} after 10 attempts: {type(e).__name__} - {e}")
-
-        # Final step: notify the manager to remove this object from memory
-        if self.on_death:
-            try:
-                if asyncio.iscoroutinefunction(self.on_death):
-                    asyncio.create_task(self.on_death(self.session_id))
-                else:
-                    self.on_death(self.session_id)
-            except: pass
 
     async def stop(self):
         """Forcible session stop."""
@@ -256,13 +260,16 @@ class Account:
         """Complete session logout and deletion."""
         logger.warning(f"Session {self.session_id} is being logged out manually.")
         self._shutdown()
-        
+        self._notify_on_death()
+        await self._logout()
+    
+    async def _logout(self):
         try:
             if not self.client.is_connected():
                 await asyncio.wait_for(self.client.connect(), timeout=7.0)
             await asyncio.wait_for(self.client.log_out(), timeout=7.0)
         except Exception as e:
-            logger.error(f"Error logging out of account {self.session_id}: {type(e).__name__} - {e}")
+            pass
         finally:
             await self.client.disconnect()
             
@@ -271,6 +278,6 @@ class Account:
             if os.path.exists(session_file):
                 try:
                     os.remove(session_file)
-                    logger.info(f"Session file {session_file} deleted on logout.")
+                    return True
                 except Exception as e:
                     logger.error(f"Failed to delete session file {self.session_id} on logout: {type(e).__name__} - {e}")

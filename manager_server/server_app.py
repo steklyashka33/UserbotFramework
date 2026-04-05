@@ -98,11 +98,10 @@ class SendMessageRequest(BaseModel):
 
 @app.post("/api/auth/send_code")
 async def send_code(req: PhoneRequest):
-    # Stop old session if exists to prevent background task conflicts during re-login
-    old_acc = accounts.get(req.session_id)
-    if old_acc:
-        await old_acc.stop()
-        
+    # check for existing session ID (user already has an active userbot)
+    if req.session_id in accounts:
+        raise HTTPException(status_code=400, detail="ALREADY_CONNECTED")
+
     acc = Account(req.session_id, API_ID, API_HASH, on_death=lambda sid: accounts.pop(sid, None))
     accounts[req.session_id] = acc
     try:
@@ -113,6 +112,8 @@ async def send_code(req: PhoneRequest):
         return {"status": "success", "phone_code_hash": res.phone_code_hash}
     except Exception as e:
         logger.error(f"Failed to send code to {req.phone} for session {req.session_id}: {type(e).__name__} - {e}")
+        # Terminate and cleanup if code request failed to avoid ghost sessions
+        await acc.logout()
         raise HTTPException(status_code=400, detail="FAILED_TO_SEND_CODE")
 
 @app.post("/api/auth/login")
@@ -125,18 +126,24 @@ async def login(req: LoginRequest):
         await acc.client.start(phone=req.phone, code=req.code, password=req.password, phone_code_hash=phone_hash)
         await acc.start_monitoring()
         me = await acc.client.get_me()
-        return {"status": "success", "id": me.id, "username": me.username}
+        return {"status": "success", "id": me.id}
     except SessionPasswordNeededError:
         raise HTTPException(status_code=401, detail="PASSWORD_NEEDED")
+    except PasswordHashInvalidError:
+        raise HTTPException(status_code=400, detail="PASSWORD_INVALID")
     except PhoneCodeInvalidError:
         raise HTTPException(status_code=400, detail="PHONE_CODE_INVALID")
     except PhoneCodeExpiredError:
+        # Code expired — complete failure of this session
+        await acc.logout() # This handles stopping, removing from accounts and file deletion
         raise HTTPException(status_code=400, detail="PHONE_CODE_EXPIRED")
     except PasswordHashInvalidError:
         raise HTTPException(status_code=400, detail="PASSWORD_INVALID")
     except Exception as e:
         logger.error(f"LOGIN FAILED for {req.session_id}: {type(e).__name__} - {e}")
-        raise HTTPException(status_code=400, detail=str(e))
+        # Fatal/Unexpected error — cleanup to avoid "ghost" sessions
+        await acc.logout()
+        raise HTTPException(status_code=400, detail=f"AUTH_ERROR_{type(e).__name__}")
 
 @app.get("/api/sessions/{session_id}/status")
 async def get_status(session_id: str):
