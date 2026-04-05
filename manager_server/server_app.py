@@ -96,25 +96,75 @@ class SendMessageRequest(BaseModel):
     target: str
     text: str
 
+async def _do_request_code(acc: Account, phone: str, session_id: str) -> dict:
+    """
+    Helper: send a Telegram code request and store the hash.
+    Raises HTTPException on network or Telegram errors.
+    Exists to avoid duplicating the try/except block in send_code.
+    """
+    try:
+        res = await acc.request_phone_code(phone)
+        sessions_hashes[session_id] = res.phone_code_hash
+        return {"status": "success", "phone_code_hash": res.phone_code_hash}
+    except NETWORK_ERRORS as e:
+        logger.error(f"Network error sending code to {phone} ({session_id}): {type(e).__name__} - {e}")
+        raise HTTPException(status_code=503, detail="FAILED_TO_CONNECT")
+    except Exception as e:
+        logger.error(f"Failed to send code to {phone} ({session_id}): {type(e).__name__} - {e}")
+        raise HTTPException(status_code=400, detail="FAILED_TO_SEND_CODE")
+
 @app.post("/api/auth/send_code")
 async def send_code(req: PhoneRequest):
-    # check for existing session ID (user already has an active userbot)
+    # Precise check: what is the current state of this session?
     if req.session_id in accounts:
-        raise HTTPException(status_code=400, detail="ALREADY_CONNECTED")
+        acc_existing = accounts[req.session_id]
+        status = await acc_existing.check_status()
 
-    acc = Account(req.session_id, API_ID, API_HASH, on_death=lambda sid: accounts.pop(sid, None))
+        if status == "CONNECTED":
+            raise HTTPException(status_code=400, detail="ALREADY_CONNECTED")
+
+        elif status == "STOPPED":
+            # File exists but session is not running — probe real health before restarting
+            probe = await acc_existing.probe_session()
+            if probe == "CONNECTED":
+                # Session is healthy — just restart monitoring and resend code
+                logger.info(f"Resuming stopped session {req.session_id}.")
+                await acc_existing.start_monitoring()
+                return await _do_request_code(acc_existing, req.phone, req.session_id)
+            elif probe == "NO_NETWORK":
+                raise HTTPException(status_code=503, detail="SESSION_NO_NETWORK")
+            elif probe == "DEAD":
+                # DEAD or NOT_AUTHORIZED — clean up and fall through to a fresh login
+                logger.warning(f"Stopped session {req.session_id} is dead (probe={probe}). Cleaning up.")
+                await acc_existing.logout()
+
+        elif status == "NO_NETWORK":
+            # Session is running but can't reach Telegram right now
+            raise HTTPException(status_code=503, detail="SESSION_NO_NETWORK")
+
+        elif status == "FILE_NOT_FOUND":
+            # Object is in memory but file was deleted — purge the ghost
+            logger.warning(f"Ghost session {req.session_id} (no file). Removing from memory.")
+            accounts.pop(req.session_id, None)
+            sessions_hashes.pop(req.session_id, None)
+            # Fall through to create a fresh session below
+
+        elif status in ("DEAD", "NOT_AUTHORIZED"):
+            logger.warning(f"Session {req.session_id} status={status}. Cleaning up.")
+            await acc_existing.logout()
+            # Fall through to create a new session below
+
+        else:  # UNKNOWN_ERROR
+            logger.error(f"Unexpected status '{status}' for session {req.session_id}. Cleaning up.")
+            await acc_existing.logout()
+
+    def _on_death(sid):
+        accounts.pop(sid, None)
+        sessions_hashes.pop(sid, None)
+
+    acc = Account(req.session_id, API_ID, API_HASH, on_death=_on_death)
     accounts[req.session_id] = acc
-    try:
-        if not acc.client.is_connected():
-            await acc.client.connect()
-        res = await acc.client.send_code_request(req.phone)
-        sessions_hashes[req.session_id] = res.phone_code_hash
-        return {"status": "success", "phone_code_hash": res.phone_code_hash}
-    except Exception as e:
-        logger.error(f"Failed to send code to {req.phone} for session {req.session_id}: {type(e).__name__} - {e}")
-        # Terminate and cleanup if code request failed to avoid ghost sessions
-        await acc.logout()
-        raise HTTPException(status_code=400, detail="FAILED_TO_SEND_CODE")
+    return await _do_request_code(acc, req.phone, req.session_id)
 
 @app.post("/api/auth/login")
 async def login(req: LoginRequest):
@@ -124,6 +174,7 @@ async def login(req: LoginRequest):
         raise HTTPException(status_code=404, detail="SESSION_NOT_FOUND")
     try:
         await acc.client.start(phone=req.phone, code=req.code, password=req.password, phone_code_hash=phone_hash)
+        sessions_hashes.pop(req.session_id, None)  # Hash consumed — no longer needed
         await acc.start_monitoring()
         me = await acc.client.get_me()
         return {"status": "success", "id": me.id}
@@ -135,13 +186,13 @@ async def login(req: LoginRequest):
         raise HTTPException(status_code=400, detail="PHONE_CODE_INVALID")
     except PhoneCodeExpiredError:
         # Code expired — complete failure of this session
-        await acc.logout() # This handles stopping, removing from accounts and file deletion
+        await acc.logout()  # Handles stopping, removing from accounts and file deletion
         raise HTTPException(status_code=400, detail="PHONE_CODE_EXPIRED")
     except PasswordHashInvalidError:
         raise HTTPException(status_code=400, detail="PASSWORD_INVALID")
     except Exception as e:
         logger.error(f"LOGIN FAILED for {req.session_id}: {type(e).__name__} - {e}")
-        # Fatal/Unexpected error — cleanup to avoid "ghost" sessions
+        # Fatal/unexpected error — cleanup to avoid "ghost" sessions
         await acc.logout()
         raise HTTPException(status_code=400, detail=f"AUTH_ERROR_{type(e).__name__}")
 
