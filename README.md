@@ -70,9 +70,11 @@ To understand how the system works, imagine the following chain:
 .
 ├── .agents/             # AI instructions, knowledge base and skills
 ├── bot_server/          # Aiogram-based management interface
+│   ├── bot_app.py       # Bot entry point and webhook listener
 │   ├── obfuscator.py    # Unicode text protection engine
 │   └── handlers.py      # Unified API communication logic
 ├── manager_server/      # FastAPI-based session management core
+│   ├── server_app.py    # Manager entry point and API controller
 │   └── core/            # Encapsulated Account (Telethon) logic
 ├── shared/              # Global config, logger, and utilities
 ├── sessions/            # Storage for .session files
