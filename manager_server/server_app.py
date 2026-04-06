@@ -3,6 +3,7 @@ import sys
 import asyncio
 import logging
 from pathlib import Path
+from typing import Dict
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from telethon import functions
@@ -52,8 +53,12 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-accounts = {}
-sessions_hashes = {} 
+accounts: Dict[str, Account] = {}
+sessions_hashes: Dict[str, str] = {}
+
+def _on_death(sid):
+    accounts.pop(sid, None)
+    sessions_hashes.pop(sid, None)
 
 async def _load_accounts_bg():
     """Background task for loading sessions."""
@@ -66,7 +71,7 @@ async def _load_accounts_bg():
             if file.endswith(".session"):
                 session_id = file.replace(".session", "")
                 try:
-                    acc = Account(session_id, API_ID, API_HASH, on_death=lambda sid: accounts.pop(sid, None))
+                    acc = Account(session_id, API_ID, API_HASH, on_death=_on_death)
                     accounts[session_id] = acc
                     await acc.start_monitoring()
                     logger.info(f"Account {session_id} is connected.")
@@ -111,7 +116,14 @@ async def _do_request_code(acc: Account, phone: str, session_id: str) -> dict:
 @app.post("/api/auth/send_code")
 async def send_code(req: PhoneRequest):
     # Precise check: what is the current state of this session?
-    if req.session_id in accounts:
+
+    # Check memories AND disk. If session exists on disk but missed indexing — load it now.
+    is_on_disk = Account.session_file_exists(req.session_id)
+    if req.session_id in accounts or is_on_disk:
+        if req.session_id not in accounts:
+            # Found on disk but not in memory — initialize and index immediately
+            accounts[req.session_id] = Account(req.session_id, API_ID, API_HASH, on_death=_on_death)
+
         acc_existing = accounts[req.session_id]
         status = await acc_existing.check_status()
 
@@ -122,15 +134,15 @@ async def send_code(req: PhoneRequest):
             # File exists but session is not running — probe real health before restarting
             probe = await acc_existing.probe_session()
             if probe == "CONNECTED":
-                # Session is healthy — just restart monitoring and resend code
-                logger.info(f"Resuming stopped session {req.session_id}.")
+                # Session is healthy and ALREADY authorized
+                logger.info(f"Session {req.session_id} is already authorized. Resuming.")
                 await acc_existing.start_monitoring()
-                return await _do_request_code(acc_existing, req.phone, req.session_id)
+                return {"status": "resumed", "id": req.session_id}
             elif probe == "NO_NETWORK":
                 raise HTTPException(status_code=503, detail="SESSION_NO_NETWORK")
-            elif probe == "DEAD":
-                # DEAD or NOT_AUTHORIZED — clean up and fall through to a fresh login
-                logger.warning(f"Stopped session {req.session_id} is dead (probe={probe}). Cleaning up.")
+            elif probe in ("DEAD", "NOT_AUTHORIZED", "FILE_NOT_FOUND"):
+                # DEAD, NOT_AUTHORIZED or file vanished — clean up and fall through to a fresh login
+                logger.warning(f"Stopped session {req.session_id} is dead or missing (probe={probe}). Cleaning up.")
                 await acc_existing.logout()
 
         elif status == "NO_NETWORK":
@@ -153,10 +165,7 @@ async def send_code(req: PhoneRequest):
             logger.error(f"Unexpected status '{status}' for session {req.session_id}. Cleaning up.")
             await acc_existing.logout()
 
-    def _on_death(sid):
-        accounts.pop(sid, None)
-        sessions_hashes.pop(sid, None)
-
+    # Fresh session creation (if not already handled or if cleanup occurred)
     acc = Account(req.session_id, API_ID, API_HASH, on_death=_on_death)
     accounts[req.session_id] = acc
     return await _do_request_code(acc, req.phone, req.session_id)
@@ -191,39 +200,39 @@ async def login(req: LoginRequest):
         await acc.logout()
         raise HTTPException(status_code=400, detail=f"AUTH_ERROR_{type(e).__name__}")
 
+@app.get("/api/auth/{session_id}/exists")
+async def check_exists(session_id: str):
+    """Check if the session exists in memory or on disk."""
+    exists = session_id in accounts or Account.session_file_exists(session_id)
+    return {"exists": exists}
+
 @app.get("/api/sessions/{session_id}/status")
 async def get_status(session_id: str):
     """Check the status of an already running userbot."""
     acc = accounts.get(session_id)
     if not acc:
         raise HTTPException(status_code=404, detail="SESSION_NOT_FOUND")
-    if not acc.is_running:
-        return {"status": "stopped"}
-    if not acc.client.is_connected():
-        return {"status": "offline_network_error"}
-    return {"status": "online"}
+    status = await acc.check_status()
+    return {"status": status}
 
 @app.get("/api/sessions")
 async def list_sessions():
-    """List all accounts and clean up those that died."""
-    # Build a list of truly dead sessions to remove them from memory
-    dead_ids = []
-    for sid, acc in accounts.items():
-        if not acc.is_running:
-            dead_ids.append(sid)
-            
-    for sid in dead_ids:
-        accounts.pop(sid, None)
+    """List all accounts and clean up those that died or have no file."""
+    sid_data = []
+
+    for sid in list(accounts.keys()):
+        acc = accounts[sid]
+        status = await acc.check_status()
         
-    return {
-        "sessions": [
-            {
-                "session_id": sid, 
-                "is_running": a.is_running, 
-                "is_connected": a.client.is_connected()
-            } for sid, a in accounts.items()
-        ]
-    }
+        if status in ("DEAD", "FILE_NOT_FOUND"):
+            _on_death(sid)
+        else:
+            sid_data.append({
+                "session_id": sid,
+                "status": status
+            })
+        
+    return {"sessions": sid_data}
 
 @app.post("/api/sessions/{session_id}/action/send_message")
 async def send_message_task(session_id: str, req: SendMessageRequest):
