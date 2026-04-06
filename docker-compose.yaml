@@ -1,9 +1,9 @@
 version: '3.8'
 
 services:
-  core_bot:
+  userbot-framework:
     build: .
-    container_name: core_userbot
+    container_name: userbot-framework
     restart: unless-stopped
     env_file:
       - .env

@@ -1,4 +1,4 @@
-# 🚀 CoreUserbot
+# 🚀 UserbotFramework
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
@@ -8,7 +8,7 @@
 
 ---
 
-**CoreUserbot** is a scalable framework for launching distributed Telegram userbots based on **Telethon**. The project provides a reliable foundation for smart session management, process isolation, high resilience, and anti-ban protection.
+**UserbotFramework** is a scalable framework for launching distributed Telegram userbots based on **Telethon**. The project provides a reliable foundation for smart session management, process isolation, high resilience, and anti-ban protection.
 
 ### ✨ Key Features
 *   ⚙️ **Telethon Userbot Cluster:** Simultaneous support and launch of multiple Telethon-based userbots in real-time.
@@ -36,8 +36,8 @@ To understand how the system works, imagine the following chain:
 #### Option 1: Docker (Recommended)
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/your-username/CoreUserbot.git
-   cd CoreUserbot
+   git clone https://github.com/steklyashka33/UserbotFramework.git
+   cd UserbotFramework
    ```
 2. **Configure Environment:**
    ```bash

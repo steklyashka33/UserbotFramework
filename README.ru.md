@@ -1,4 +1,4 @@
-# 🚀 CoreUserbot
+# 🚀 UserbotFramework
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
@@ -8,7 +8,7 @@
 
 ---
 
-**CoreUserbot** — это масштабируемый фреймворк для запуска распределенных Telegram юзерботов на базе **Telethon**. Проект предоставляет надежный фундамент для умного управления сессиями, изоляции процессов, высокой отказоустойчивости и защиты от банов.
+**UserbotFramework** — это масштабируемый фреймворк для запуска распределенных Telegram юзерботов на базе **Telethon**. Проект предоставляет надежный фундамент для умного управления сессиями, изоляции процессов, высокой отказоустойчивости и защиты от банов.
 
 ### ✨ Ключевые Особенности
 *   ⚙️ **Telethon Userbot Cluster:** Полноценная поддержка и запуск множества юзерботов на базе Telethon одновременно.
@@ -36,8 +36,8 @@
 #### Вариант 1: Docker (Рекомендуется)
 1. **Клонируйте репозиторий:**
    ```bash
-   git clone https://github.com/your-username/CoreUserbot.git
-   cd CoreUserbot
+   git clone https://github.com/steklyashka33/UserbotFramework.git
+   cd UserbotFramework
    ```
 2. **Настройте переменные окружения:**
    ```bash

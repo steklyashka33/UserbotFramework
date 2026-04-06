@@ -1,4 +1,4 @@
-# 🧠 Knowledge Base: CoreUserbot Distributed Architecture
+# 🧠 Knowledge Base: UserbotFramework Distributed Architecture
 
 This project is a high-performance, resilient framework for managing Telegram userbots via a centralized API (Manager) and a Telegram interface (Bot).
 

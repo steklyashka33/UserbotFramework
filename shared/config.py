@@ -3,7 +3,7 @@ import random
 from pathlib import Path
 from dotenv import load_dotenv
 
-# --- CORE SETUP ---
+# --- SETUP ---
 # Fundamental isolation: locate project root regardless of script execution path
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env", override=True)
