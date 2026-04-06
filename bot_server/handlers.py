@@ -43,7 +43,38 @@ async def start_cmd(message: Message):
 
 @router.message(Command("login"))
 async def login_cmd(message: Message, state: FSMContext):
-    """Initiating phone request. Using obfuscator to mask words!"""
+    """Initiating phone request. Checking if already connected first."""
+    user_id = message.from_user.id
+    
+    # Pre-check: maybe this user is already connected?
+    data, status_code = await _manager_request(f"/api/sessions/{user_id}/status")
+    if status_code == 200:
+        current_status = data.get("status")
+        if current_status == "CONNECTED":
+            await message.answer("✅ **You are already connected and your userbot is running!**\nUse /sessions or /info to manage it.", parse_mode="Markdown")
+            return
+        elif current_status == "STOPPED":
+            # Just start it!
+            _, s_status = await _manager_request(f"/api/sessions/{user_id}/start", method="POST")
+            if s_status == 200:
+                await message.answer("⚡ **Your userbot was stopped but now it is successfully restarted and running!**", parse_mode="Markdown")
+                return
+            elif s_status == 404:
+                # Session vanished between checks? Just proceed to login
+                pass
+            elif s_status == 0:
+                await message.answer("⚠️ Manager server is completely unavailable. Cannot restart session.")
+                return
+            else:
+                await message.answer("❓ **Failed to restart your session.**\nTry to manually /login again.", parse_mode="Markdown")
+                return
+    elif status_code in (0, 408, 503):
+        # Network issues during status check
+        if status_code == 0: await message.answer("⚠️ Manager server is completely unavailable.")
+        elif status_code == 408: await message.answer("⏳ Status check timed out. Please try again.")
+        elif status_code == 503: await message.answer("📡 Network error while checking status.")
+        return
+
     text = obfuscate("To connect your account, send your phone number by pressing the button below. We verify that the contact belongs to you.")
     
     # Share Contact button
@@ -82,10 +113,14 @@ async def _manager_request(endpoint: str, method: str = "GET", payload: dict = N
         async with aiohttp.ClientSession() as session:
             if method == "POST":
                 async with session.post(url, json=payload, timeout=timeout) as resp:
-                    return await resp.json(), resp.status
+                    if resp.content_type == 'application/json':
+                        return await resp.json(), resp.status
+                    return None, resp.status
             else:
                 async with session.get(url, timeout=timeout) as resp:
-                    return await resp.json(), resp.status
+                    if resp.content_type == 'application/json':
+                        return await resp.json(), resp.status
+                    return None, resp.status
     except asyncio.TimeoutError:
         logger.warning(f"Manager API Request Timed Out ({endpoint})")
         return None, 408
@@ -94,7 +129,7 @@ async def _manager_request(endpoint: str, method: str = "GET", payload: dict = N
         return None, 503
     except Exception as e:
         logger.error(f"Manager API Unexpected Error ({endpoint}): {type(e).__name__} - {e}")
-        return None, 0 # Unreachable
+        return None, 0
 
 @router.message(AuthState.waiting_for_phone)
 async def process_phone(message: Message, state: FSMContext):
@@ -205,7 +240,7 @@ async def process_code_callback(callback: CallbackQuery, state: FSMContext):
             else:
                 detail = data.get('detail', 'Unknown error') if data else 'Empty response'
                 if detail == "PHONE_CODE_INVALID":
-                    await callback.message.answer("❌ Invalid code! Please enter the code again.")
+                    await callback.message.answer(f"❌ Invalid {obfuscate('code')}! Please enter the {obfuscate('code')} again.")
                     await state.update_data(current_code="")
                     text = obfuscate("Enter Telegram CODE (5 digits):") + "\n\n`_ _ _ _ _`"
                     await callback.message.edit_text(text, reply_markup=get_code_kb(), parse_mode="Markdown")
@@ -416,3 +451,31 @@ async def send_logout_cmd(message: Message):
         await wait_msg.edit_text(f"📡 Network error during logout.")
     else:
         await wait_msg.edit_text(f"❌ Error: Session ({session_id}) not found in the system.")
+
+@router.message(Command("stop"))
+async def stop_cmd_bot(message: Message):
+    """Temporary stop of the userbot loop."""
+    session_id = await get_session_id_fallback(message)
+    
+    wait_msg = await message.answer(f"⏳ Stopping {obfuscate('userbot')} `{session_id}`...", parse_mode="Markdown")
+    data, status = await _manager_request(f"/api/sessions/{session_id}/stop", method="POST")
+
+    if status == 200:
+        resp_status = data.get("status") if data else None
+        if resp_status == "already_stopped":
+            await wait_msg.edit_text(f"ℹ️ Your {obfuscate('userbot')} is already stopped.")
+        elif resp_status == "success":
+            await wait_msg.edit_text(f"🛑 Your {obfuscate('userbot')} has been successfully stopped.\n\nUse /login to restart it.")
+        else:
+            await wait_msg.edit_text(f"❓ Manager returned unexpected status: `{resp_status}`", parse_mode="Markdown")
+    elif status == 404:
+        await wait_msg.edit_text(f"❌ {obfuscate('Session')} not found.\nMaybe you haven't logged in yet?")
+    elif status == 0:
+        await wait_msg.edit_text("⚠️ Manager server is completely unavailable.")
+    elif status == 408:
+        await wait_msg.edit_text("⏳ Stop request timed out.")
+    elif status == 503:
+        await wait_msg.edit_text("📡 Network error while stopping userbot.")
+    else:
+         detail = data.get("detail", "Unknown error") if isinstance(data, dict) else "Unknown"
+         await wait_msg.edit_text(f"❌ Stop failed': {detail}")
