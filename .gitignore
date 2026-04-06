@@ -46,3 +46,4 @@ sessions/
 *.swp
 *.swo
 .DS_Store
+.agents/skills/  
