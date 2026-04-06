@@ -22,31 +22,40 @@ BOT_TOKEN = os.getenv("API_TOKEN", "")
 # DEVICE MASQUERADE (Anti-Ban)
 # ──────────────────────────────────────────────────────────────────────────────
 
-# If True — a random device from the list below will be selected for each session.
-# If False — a static device (Samsung SM-A022G) will be used for all sessions.
-USE_RANDOM_DEVICE = False
+# If True — each session gets its own unique (but stable) device profile.
+# If False — every session uses the STATIC_DEVICE_CONFIG defined below.
+USE_STABLE_RANDOM_DEVICE = True
+
+# Values used when USE_STABLE_RANDOM_DEVICE is False
+STATIC_DEVICE_CONFIG = {
+    "device_model": "Samsung SM-A022G",
+    "system_version": "SDK 31",
+    "app_version": "12.6.2",
+}
 
 DEVICE_MODELS = [
-    "Huawei NATCOM N8302", "Huawei VIETTEL V8404", "Huawei HUAWEI Y210-0251", "Huawei Pulse",
-    "Huawei Grameenphone Crystal", "Xiaomi Redmi K30 Pro 5G", "Xiaomi MI 8 Explorer Edition",
-    "Xiaomi MI 8 Pro", "Xiaomi MI 8 UD", "Samsung SM-A750FN", "Samsung SM-S908B", 
-    "Google Pixel 5", "OnePlus 8 Pro", "Samsung S21 Ultra", "Redmi Note 10"
+    "Samsung SM-S918B", "Samsung SM-G998B", "Samsung SM-A546B", "Google Pixel 8 Pro", 
+    "Google Pixel 7a", "OnePlus 11 5G", "Xiaomi 13 Ultra", "Xiaomi Redmi Note 12 Pro", 
+    "Huawei P60 Pro", "Realme GT3", "Nothing Phone (2)", "Sony Xperia 1 V",
+    "Samsung SM-A750FN", "Google Pixel 5", "OnePlus 8 Pro"
 ]
-SYSTEM_VERSIONS = [f"SDK {i}" for i in range(24, 36)]
+SYSTEM_VERSIONS = [f"SDK {i}" for i in range(28, 36)] # Android 9–16
 
-if USE_RANDOM_DEVICE:
-    # Dynamic configuration (refreshed on every restart)
-    DEVICE_CONFIG = {
-        "device_model": random.choice(DEVICE_MODELS),
-        "system_version": random.choice(SYSTEM_VERSIONS),
-        "app_version": f"{random.randint(9, 12)}.{random.randint(0, 5)}.{random.randint(0, 4)}",
-    }
-else:
-    # Static configuration (keeps your device fingerprint consistent)
-    DEVICE_CONFIG = {
-        "device_model": "Samsung SM-A022G",
-        "system_version": "SDK 31",
-        "app_version": "12.6.2",
+def get_device_info(session_id: str) -> dict:
+    """
+    Generate deterministic device metadata for a session.
+    The same session_id will ALWAYS return the same device info.
+    This ensures consistency while providing uniqueness between accounts.
+    """
+    if not USE_STABLE_RANDOM_DEVICE:
+        return STATIC_DEVICE_CONFIG
+
+    # Seeding the random generator locally to ensure deterministic output per session
+    rng = random.Random(session_id)
+    return {
+        "device_model": rng.choice(DEVICE_MODELS),
+        "system_version": rng.choice(SYSTEM_VERSIONS),
+        "app_version": f"{rng.randint(10, 12)}.{rng.randint(1, 6)}.{rng.randint(0, 5)}",
     }
 
 # ──────────────────────────────────────────────────────────────────────────────

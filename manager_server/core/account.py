@@ -10,7 +10,7 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 from .client import TelegramClientForBot
-from shared.config import DEVICE_CONFIG, BOT_WEBHOOK_URL
+from shared.config import get_device_info, BOT_WEBHOOK_URL
 from shared.logging_utils import setup_logger
 from telethon.errors import (
     AuthKeyUnregisteredError, SessionRevokedError,
@@ -49,7 +49,7 @@ class Account:
             connection_retries=0,  # IMPORTANT: 0, so it crashes immediately on error
             auto_reconnect=False,  # IMPORTANT: do not let it go into network wait on its own
             timeout=5,             # Timeout for network request
-            **DEVICE_CONFIG,
+            **get_device_info(self.session_id),
             lang_code="en",
             system_lang_code="en-US"
         )
