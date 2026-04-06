@@ -73,7 +73,7 @@ async def _load_accounts_bg():
                 try:
                     acc = Account(session_id, API_ID, API_HASH, on_death=_on_death)
                     accounts[session_id] = acc
-                    await acc.start_monitoring()
+                    await acc.start()
                     logger.info(f"Account {session_id} is connected.")
                     loaded_count += 1
                 except Exception as e:
@@ -136,7 +136,7 @@ async def send_code(req: PhoneRequest):
             if probe == "CONNECTED":
                 # Session is healthy and ALREADY authorized
                 logger.info(f"Session {req.session_id} is already authorized. Resuming.")
-                await acc_existing.start_monitoring()
+                await acc_existing.start()
                 return {"status": "resumed", "id": req.session_id}
             elif probe == "NO_NETWORK":
                 raise HTTPException(status_code=503, detail="SESSION_NO_NETWORK")
@@ -179,7 +179,7 @@ async def login(req: LoginRequest):
     try:
         await acc.client.start(phone=req.phone, code=req.code, password=req.password, phone_code_hash=phone_hash)
         sessions_hashes.pop(req.session_id, None)  # Hash consumed — no longer needed
-        await acc.start_monitoring()
+        await acc.start()
         logger.info(f"Account {req.session_id} is connected.")
         return {"status": "success", "id": req.session_id}
     except SessionPasswordNeededError:
@@ -314,15 +314,49 @@ async def session_info(session_id: str):
         logger.error(f"Failed to get info for session {session_id}: {type(e).__name__} - {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/api/sessions/{session_id}/start")
+async def start_session(session_id: str):
+    """Start (resume) the userbot via API."""
+    acc = accounts.get(session_id)
+    
+    # 1. If already in memory
+    if acc:
+        status = await acc.check_status()
+        if status == "CONNECTED":
+            return {"status": "already_running"}
+        
+        # Re-check disk just in case
+        if not Account.session_file_exists(session_id):
+            _on_death(session_id)
+            raise HTTPException(status_code=404, detail="SESSION_FILE_NOT_FOUND")
+            
+        await acc.start()
+        return {"status": "success"}
+
+    # 2. If not in memory, try to load from disk
+    if Account.session_file_exists(session_id):
+        acc = Account(session_id, API_ID, API_HASH, on_death=_on_death)
+        accounts[session_id] = acc
+        await acc.start()
+        return {"status": "success"}
+
+    raise HTTPException(status_code=404, detail="SESSION_NOT_FOUND")
+
 @app.post("/api/sessions/{session_id}/stop")
 async def stop_session(session_id: str):
     """Stop the userbot via API."""
     acc = accounts.get(session_id)
-    if not acc:
-        raise HTTPException(status_code=404, detail="SESSION_NOT_FOUND")
-    await acc.stop()
-    del accounts[session_id]
-    return {"status": "success"}
+
+    if acc:
+        await acc.stop()
+        return {"status": "success"}
+    
+    if Account.session_file_exists(session_id):
+        acc = Account(session_id, API_ID, API_HASH, on_death=_on_death)
+        accounts[session_id] = acc
+        return {"status": "already_stopped"}
+    
+    raise HTTPException(status_code=404, detail="SESSION_NOT_FOUND")
 
 @app.post("/api/sessions/{session_id}/logout")
 async def logout_session(session_id: str):

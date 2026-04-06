@@ -79,7 +79,7 @@ class Account:
         except asyncio.TimeoutError:
             return False
 
-    async def start_monitoring(self):
+    async def start(self):
         """Start health check loop and warm-up for the session."""
         self.is_running = True
         self._ready_event.clear()
