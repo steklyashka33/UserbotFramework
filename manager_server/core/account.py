@@ -156,10 +156,10 @@ class Account:
             # Some other non-critical error — let the monitoring loop continue
             return False
 
-    @property
-    def session_file_exists(self) -> bool:
+    @staticmethod
+    def session_file_exists(session_id: str) -> bool:
         """Check whether the .session file exists on disk."""
-        return (BASE_DIR / "sessions" / f"{self.session_id}.session").exists()
+        return (BASE_DIR / "sessions" / f"{session_id}.session").exists()
 
     async def check_status(self) -> str:
         """
@@ -178,19 +178,9 @@ class Account:
         """
         if not self.is_running:
             # Distinguish between "stopped but recoverable" and "file gone"
-            return "STOPPED" if self.session_file_exists else "FILE_NOT_FOUND"
+            return "STOPPED" if self.session_file_exists(self.session_id) else "FILE_NOT_FOUND"
 
-        try:
-            await self.ensure_connected()
-        except NETWORK_ERRORS:
-            return "NO_NETWORK"
-
-        death_reason = await self._check_death_reason()
-        if death_reason == "login_incomplete":
-            return "NOT_AUTHORIZED"
-        if death_reason:
-            return "DEAD"
-        return "CONNECTED"
+        return await self.probe_session()
 
     async def probe_session(self) -> str:
         """
@@ -198,19 +188,24 @@ class Account:
         Unlike check_status(), ignores is_running — always connects and verifies.
 
         Used before restarting a STOPPED session to avoid restarting a dead one.
-        Returns: 'CONNECTED', 'NO_NETWORK', 'NOT_AUTHORIZED', 'DEAD'.
+        Returns: 'CONNECTED', 'NO_NETWORK', 'NOT_AUTHORIZED', 'DEAD', 'FILE_NOT_FOUND', 'UNKNOWN_ERROR'.
         """
+        if not self.session_file_exists(self.session_id):
+            return "FILE_NOT_FOUND"
+
         try:
             await self.ensure_connected()
+            death_reason = await self._check_death_reason()
+            if death_reason == "login_incomplete":
+                return "NOT_AUTHORIZED"
+            if death_reason:
+                return "DEAD"
+            return "CONNECTED"
         except NETWORK_ERRORS:
             return "NO_NETWORK"
-
-        death_reason = await self._check_death_reason()
-        if death_reason == "login_incomplete":
-            return "NOT_AUTHORIZED"
-        if death_reason:
-            return "DEAD"
-        return "CONNECTED"
+        except Exception as e:
+            logger.error(f"Unexpected error in probe_session for {self.session_id}: {type(e).__name__} - {e}")
+            return "UNKNOWN_ERROR"
 
     async def ensure_alive(self) -> bool:
         """
@@ -309,6 +304,10 @@ class Account:
 
                 await self.client(build_req())
                 logger.debug(f"[warm_up] {self.session_id}: {name} OK")
+            except NETWORK_ERRORS:
+                logger.warning(f"[warm_up] {self.session_id}: Network failure during warm-up. Aborting task.")
+                self._warm_up_task = None
+                return
             except Exception as e:
                 logger.warning(f"[warm_up] {self.session_id}: {name} failed: {type(e).__name__} - {e}")
 
