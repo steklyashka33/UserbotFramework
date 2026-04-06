@@ -29,6 +29,9 @@ The system is divided into two independent services for process isolation and sc
 Implemented via the `Account` class in `manager_server/core/account.py`:
 - **Encapsulation**: All Telethon client interactions (connect, auth check, logout) are hidden inside the class.
 - **Proactive Monitoring**: A background loop (`_monitoring_loop`) checks session health every 10 seconds.
+- **Health Check Loop**: Each session makes a fast `is_user_authorized()` request every 10 seconds. If the network drops, the system goes into wait mode (warning) but does not delete data.
+- **Fail-Safe Warm-up**: The warm-up task is protected against network failures. If the connection is lost during imitation requests, the task aborts gracefully to prevent infinite loops.
+- **Session Existence Check**: New endpoint `GET /api/auth/{session_id}/exists` allows checking if a session exists in memory or on disk without starting it.
 - **Auto-Cleanup**: If a session is banned or revoked, the system automatically calls `logout()`, deleting local files and notifying the Bot via Webhook.
 - **Probe Logic**: Uses `probe_session()` to verify health of stopped sessions before allowing a restart.
 
