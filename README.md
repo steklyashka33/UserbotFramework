@@ -6,17 +6,19 @@
 
 [🇷🇺 Russian Version](README.ru.md)
 
-**Scalable & Distributed Telegram Userbot Core with Bot-driven management.**
+**Scalable & Distributed Telegram Userbot Framework with Smart Session Management.**
 
 ---
 
-**CoreUserbot** is a high-performance, modular framework for building distributed Telegram userbots. This project is built for developers who need a robust foundation for multi-account management with process isolation and high resilience.
+**CoreUserbot** is a production-ready, modular framework for building distributed Telegram userbots. It provides a robust foundation for multi-account management with process isolation, high resilience, and anti-ban protection.
 
 ### ✨ Key Features
 *   ⚙️ **Distributed Architecture:** Independent Manager (FastAPI) and Bot (Aiogram) servers.
-*   🛡️ **Process Isolation:** Uses `subprocess` API to avoid socket conflicts, specifically optimized for Windows.
-*   🌐 **Resilience:** Automatic health checks and re-connection logic for unstable networks.
-*   🚀 **Zero-Wait Startup:** Instant server binding with background session initialization.
+*   🛡️ **Smart Lifecycle Management:** OOP-based `Account` class with proactive health checks.
+*   🧠 **Human-like Behavior:** Built-in "warm-up" routine to mimic real app interaction patterns.
+*   🎭 **Anti-Ban Engine:** Unicode-based message obfuscator to bypass automated detection.
+*   🌐 **Multi-Host Ready:** Centralized networking supporting separate servers for Bot and Manager.
+*   🚀 **Zero-Wait Startup:** Instant server binding with background session indexing.
 *   🐋 **Dockerized:** Ready for production with one command.
 
 ---
@@ -47,7 +49,7 @@
    pip install -r requirements.txt
    ```
 2. **Configuration:**
-   Copy `.env.example` to `.env` and fill it in.
+   Copy `.env.example` to `.env` and fill it in. Adjust networking in `shared/config.py` if needed.
 3. **Launch:**
    ```bash
    python main.py
@@ -58,9 +60,12 @@
 ### 📂 Project Structure
 ```text
 .
-├── bot_server/          # Aiogram-based management interface
+├── bot_server/          # AIogram-based management interface
+│   ├── obfuscator.py    # Unicode-based text protection engine
+│   └── handlers.py      # Unified API communication & UI logic
 ├── manager_server/      # FastAPI-based session & API core
-├── shared/              # Common utilities, config, and logging
+│   └── core/            # Encapsulated Account (Telethon) & Client logic
+├── shared/              # Centralized Config, Logging, and Utilities
 ├── sessions/            # Storage for .session files (Telethon)
 ├── main.py              # Orchestration entry point
 └── docker-compose.yaml  # Deployment configuration
@@ -68,15 +73,16 @@
 
 ---
 
-### ⚙️ Configuration (.env)
-| Variable | Purpose |
-| :--- | :--- |
-| `API_ID` | Telegram API ID from my.telegram.org |
-| `API_HASH` | Telegram API Hash from my.telegram.org |
-| `API_TOKEN` | Bot API Token from @BotFather |
+### ⚙️ Configuration
+The project uses a hybrid configuration system for maximum flexibility:
 
-> [!NOTE]
-> Other settings (ports, feature flags) are configured directly in [shared/config.py](shared/config.py).
+1.  **.env**: Store secret credentials (`API_ID`, `API_HASH`, `API_TOKEN`).
+2.  **shared/config.py**: Centralized source of truth for all other settings:
+    *   `MANAGER_HOST` / `BOT_HOST`: IP addresses for multi-server deployment.
+    *   `MANAGER_PORT` / `BOT_PORT`: Communication ports.
+    *   `USE_STABLE_RANDOM_DEVICE`: Toggle unique-per-session vs. static device fingerprint.
+    *   `STATIC_DEVICE_CONFIG`: Fixed device profile used when randomization is disabled.
+    *   `HIDE_API_LOGS`: Clean terminal output toggle.
 
 ---
 
