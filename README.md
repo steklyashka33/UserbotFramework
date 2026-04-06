@@ -80,7 +80,7 @@ The project uses a hybrid configuration system for maximum flexibility:
 2.  **shared/config.py**: Centralized source of truth for all other settings:
     *   `MANAGER_HOST` / `BOT_HOST`: IP addresses for multi-server deployment.
     *   `MANAGER_PORT` / `BOT_PORT`: Communication ports.
-    *   `USE_STABLE_RANDOM_DEVICE`: Toggle unique-per-session vs. static device fingerprint.
+    *   `USE_UNIQUE_DEVICES`: Toggle between unique-per-session vs static device fingerprint.
     *   `STATIC_DEVICE_CONFIG`: Fixed device profile used when randomization is disabled.
     *   `HIDE_API_LOGS`: Clean terminal output toggle.
 

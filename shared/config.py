@@ -24,9 +24,9 @@ BOT_TOKEN = os.getenv("API_TOKEN", "")
 
 # If True — each session gets its own unique (but stable) device profile.
 # If False — every session uses the STATIC_DEVICE_CONFIG defined below.
-USE_STABLE_RANDOM_DEVICE = True
+USE_UNIQUE_DEVICES = True
 
-# Values used when USE_STABLE_RANDOM_DEVICE is False
+# Values used when USE_UNIQUE_DEVICES is False
 STATIC_DEVICE_CONFIG = {
     "device_model": "Samsung SM-A022G",
     "system_version": "SDK 31",
@@ -47,7 +47,7 @@ def get_device_info(session_id: str) -> dict:
     The same session_id will ALWAYS return the same device info.
     This ensures consistency while providing uniqueness between accounts.
     """
-    if not USE_STABLE_RANDOM_DEVICE:
+    if not USE_UNIQUE_DEVICES:
         return STATIC_DEVICE_CONFIG
 
     # Seeding the random generator locally to ensure deterministic output per session

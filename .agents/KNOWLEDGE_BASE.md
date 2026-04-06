@@ -41,7 +41,7 @@ New sessions undergo a "warm-up" routine to mimic real Telegram app behavior:
 Single source of truth for the entire system:
 - **Networking**: Support for separate hosts (`MANAGER_HOST`, `BOT_HOST`) allows deploying services on different servers.
 - **Device Masquerading**: 
-    - `USE_STABLE_RANDOM_DEVICE`: If True, each session gets a unique device profile that stays persistent (seeded by ID).
+    - `USE_UNIQUE_DEVICES`: If True, each session gets a unique device profile that stays persistent (seeded by ID).
     - `STATIC_DEVICE_CONFIG`: If False, all sessions share a single customizable device fingerprint.
 - **Credential Isolation**: Only secrets (`API_ID`, `API_HASH`, `BOT_TOKEN`) stay in `.env`.
 - **Log Control**: `HIDE_API_LOGS` flag to suppress frequent HTTP success logs for cleaner console output.
