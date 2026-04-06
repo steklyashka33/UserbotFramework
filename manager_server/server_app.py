@@ -69,6 +69,7 @@ async def _load_accounts_bg():
                     acc = Account(session_id, API_ID, API_HASH, on_death=lambda sid: accounts.pop(sid, None))
                     accounts[session_id] = acc
                     await acc.start_monitoring()
+                    logger.info(f"Account {session_id} is connected.")
                     loaded_count += 1
                 except Exception as e:
                     logger.error(f"Initialization error for {session_id}: {type(e).__name__} - {e}")
@@ -170,8 +171,8 @@ async def login(req: LoginRequest):
         await acc.client.start(phone=req.phone, code=req.code, password=req.password, phone_code_hash=phone_hash)
         sessions_hashes.pop(req.session_id, None)  # Hash consumed — no longer needed
         await acc.start_monitoring()
-        me = await acc.client.get_me()
-        return {"status": "success", "id": me.id}
+        logger.info(f"Account {req.session_id} is connected.")
+        return {"status": "success", "id": req.session_id}
     except SessionPasswordNeededError:
         raise HTTPException(status_code=401, detail="PASSWORD_NEEDED")
     except PasswordHashInvalidError:
