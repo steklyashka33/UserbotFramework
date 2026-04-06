@@ -1,3 +1,4 @@
+import asyncio
 import os
 import sys
 import aiohttp
@@ -85,8 +86,14 @@ async def _manager_request(endpoint: str, method: str = "GET", payload: dict = N
             else:
                 async with session.get(url, timeout=timeout) as resp:
                     return await resp.json(), resp.status
+    except asyncio.TimeoutError:
+        logger.warning(f"Manager API Request Timed Out ({endpoint})")
+        return None, 408
+    except aiohttp.ClientError as e:
+        logger.error(f"Manager API Network Error ({endpoint}): {e}")
+        return None, 503
     except Exception as e:
-        logger.error(f"Manager API Request Failed ({endpoint}): {type(e).__name__} - {e}")
+        logger.error(f"Manager API Unexpected Error ({endpoint}): {type(e).__name__} - {e}")
         return None, 0 # Unreachable
 
 @router.message(AuthState.waiting_for_phone)
@@ -112,6 +119,13 @@ async def process_phone(message: Message, state: FSMContext):
     data, status = await _manager_request("/api/auth/send_code", method="POST", payload={"phone": phone, "session_id": session_id})
     
     if status == 200:
+        if data.get("status") == "resumed":
+            try: await wait_msg.delete() 
+            except: pass
+            await message.answer(f"✅ Account connected! (Session resumed)")
+            await state.clear()
+            return
+
         await state.update_data(phone=phone, session_id=session_id, current_code="")
         try:
             await wait_msg.delete()
@@ -123,7 +137,11 @@ async def process_phone(message: Message, state: FSMContext):
         await state.set_state(AuthState.waiting_for_code)
     else:
         if status == 0:
-            await wait_msg.answer("⚠️ Manager server API unavailable.")
+            await wait_msg.answer("⚠️ Manager server API is completely unavailable.")
+        elif status == 408:
+            await wait_msg.answer("⏳ Request to Manager timed out. Server might be busy.")
+        elif status == 503:
+            await wait_msg.answer("📡 Network error connecting to Manager API.")
         else:
             detail = data.get('detail', 'Unknown error') if data else 'Empty response'
             if detail == "ALREADY_CONNECTED":
@@ -170,11 +188,7 @@ async def process_code_callback(callback: CallbackQuery, state: FSMContext):
         data, status = await _manager_request("/api/auth/login", method="POST", payload=payload)
         
         if status == 200:
-            await callback.message.answer(
-                f"✅ Account connected!\n"
-                f"Your Session ID: {data['id']}\n"
-                f"Name: {data['username']}"
-            )
+            await callback.message.edit_text(f"✅ Account connected!")
             await state.clear()
         elif status == 401:
             await state.update_data(code=current_code)
@@ -183,7 +197,11 @@ async def process_code_callback(callback: CallbackQuery, state: FSMContext):
             await state.set_state(AuthState.waiting_for_password)
         else:
             if status == 0:
-                await callback.message.answer("⚠️ Manager server unavailable.")
+                await callback.message.answer("⚠️ Manager server is completely unavailable.")
+            elif status == 408:
+                await callback.message.answer("⏳ Request to Manager timed out.")
+            elif status == 503:
+                await callback.message.answer("📡 Connection error to Manager server.")
             else:
                 detail = data.get('detail', 'Unknown error') if data else 'Empty response'
                 if detail == "PHONE_CODE_INVALID":
@@ -217,13 +235,16 @@ async def process_password(message: Message, state: FSMContext):
     data, status = await _manager_request("/api/auth/login", method="POST", payload=payload)
 
     if status == 200:
-        await message.answer(
-            f"✅ Success! Account with 2FA connected.\n"
-            f"Session ID: {data['id']}\n"
-        )
+        await message.answer(f"✅ Success! Account with 2FA connected.")
         await state.clear()
     elif status == 0:
-        await message.answer("⚠️ Failed to connect to auth server.")
+        await message.answer("⚠️ Manager server is completely unavailable.")
+        await state.clear()
+    elif status == 408:
+        await message.answer("⏳ Password check timed out.")
+        await state.clear()
+    elif status == 503:
+        await message.answer("📡 Network error while checking password.")
         await state.clear()
     else:
         detail = data.get('detail', 'Unknown error') if data else 'Empty response'
@@ -243,7 +264,11 @@ async def list_sessions_cmd(message: Message):
     
     if status != 200:
         if status == 0:
-            await message.answer("⚠️ Manager server is temporarily unavailable. Try again later.")
+            await message.answer("⚠️ Manager server is completely unavailable.")
+        elif status == 408:
+            await message.answer("⏳ Session list request timed out.")
+        elif status == 503:
+            await message.answer("📡 Network error while getting sessions.")
         else:
             await message.answer("Manager error while getting list.")
         return
@@ -255,9 +280,13 @@ async def list_sessions_cmd(message: Message):
     
     text = "🤖 **Active userbots:**\n\n"
     for s in sessions:
-        status = "🟢" if s['is_running'] else "🔴"
-        # Exclude ID in backticks for easy copying in TG
-        text += f"{status} ID: `{s['session_id']}`\n"
+        status_val = s.get('status', 'UNKNOWN')
+        icon = "🟢" if status_val == "CONNECTED" else "🔴"
+        if status_val == "NO_NETWORK": icon = "⏳"
+        if status_val == "NOT_AUTHORIZED": icon = "🔑"
+        if status_val == "UNKNOWN_ERROR": icon = "⚠️"
+        
+        text += f"{icon} `{s['session_id']}` — {status_val}\n"
     
     await message.answer(text, parse_mode="Markdown")
 
@@ -329,7 +358,11 @@ async def get_info_cmd(message: Message):
         await message.answer(info_text, parse_mode="Markdown")
     else:
         if status == 0:
-            await message.answer("⚠️ Manager server unavailable.")
+            await message.answer("⚠️ Manager server is completely unavailable.")
+        elif status == 408:
+            await message.answer("⏳ Info request timed out.")
+        elif status == 503:
+            await message.answer("📡 Network error while fetching info.")
         else:
             await message.answer(f"Session with ID {session_id} not found or offline.")
 
@@ -356,8 +389,10 @@ async def send_ping_cmd(message: Message):
         await message.answer(f"⏳ **Telegram limit:** {detail}")
     elif status == 503:
         await message.answer(f"⚠️ Userbot ({session_id}) is bound, but **no network**.", parse_mode="Markdown")
+    elif status == 408:
+        await message.answer(f"⏳ Task request timed out.")
     elif status == 0:
-        await message.answer(f"Manager server unavailable.")
+        await message.answer(f"Manager server is completely unavailable.")
     else:
         detail = data.get("detail", "Unknown error") if isinstance(data, dict) else data
         await message.answer(f"❌ Error sending task for {session_id}: {detail}")
@@ -374,6 +409,10 @@ async def send_logout_cmd(message: Message):
     if status == 200:
         await wait_msg.edit_text(f"✅ Account ({session_id}) successfully disconnected and all session data removed!")
     elif status == 0:
-        await wait_msg.edit_text(f"Manager server unavailable.")
+        await wait_msg.edit_text(f"Manager server is completely unavailable.")
+    elif status == 408:
+        await wait_msg.edit_text(f"⏳ Logout request timed out.")
+    elif status == 503:
+        await wait_msg.edit_text(f"📡 Network error during logout.")
     else:
         await wait_msg.edit_text(f"❌ Error: Session ({session_id}) not found in the system.")
