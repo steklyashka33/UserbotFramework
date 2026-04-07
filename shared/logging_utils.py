@@ -1,10 +1,15 @@
 import logging
 import sys
 
+from . import config
+
 def setup_logger(name: str):
-    """Setup a unified log format for all MVP modules."""
+    """Setup a unified log format for all modules."""
     logger = logging.getLogger(name)
-    logger.setLevel(logging.INFO)
+    
+    # Get level from config
+    level = getattr(logging, config.LOG_LEVEL, logging.INFO)
+    logger.setLevel(level)
     
     # Avoid log duplication if logger is already set up
     if not logger.handlers:

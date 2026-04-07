@@ -12,11 +12,37 @@ load_dotenv(BASE_DIR / ".env", override=True)
 # PERSONAL CREDENTIALS (FROM .ENV)
 # ──────────────────────────────────────────────────────────────────────────────
 # These are unique to each user and should be kept private in your .env file.
+
 # Telegram API credentials
-API_ID    = int(os.getenv("API_ID", 0))
+try:
+    API_ID    = int(os.getenv("API_ID", 0))
+except ValueError:
+    API_ID    = 0
+    
 API_HASH  = os.getenv("API_HASH", "")
 # Bot Token
 BOT_TOKEN = os.getenv("API_TOKEN", "")
+
+# ──────────────────────────────────────────────────────────────────────────────
+# VALIDATION: Ensure the bot has essential credentials
+# ──────────────────────────────────────────────────────────────────────────────
+_missing = []
+if not API_ID:    _missing.append("API_ID (must be a number)")
+if not API_HASH:  _missing.append("API_HASH (string)")
+if not BOT_TOKEN: _missing.append("API_TOKEN (Telegram Bot Token)")
+
+if _missing:
+    print("\n" + "!"*60)
+    print(" CRITICAL CONFIGURATION ERROR ".center(60, "!"))
+    print("!"*60 + "\n")
+    print("One or more required variables are missing or invalid in your .env:")
+    for m in _missing:
+        print(f"  ❌ {m}")
+    print("\n1. Go to https://my.telegram.org/ to get API_ID and API_HASH.")
+    print("2. Use @BotFather to get your Bot Token (API_TOKEN).")
+    print("3. Add them to your .env file and restart.\n")
+    import sys
+    sys.exit(1)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # SESSION IDENTIFICATION
@@ -85,3 +111,6 @@ SHOW_ALL_SESSIONS_IN_INFO = False
 # Clean up console: Set to True to hide frequent API status logs (GET/POST ... 200 OK).
 # Set to False if you need to debug communication between Bot and Manager.
 HIDE_API_LOGS = True
+
+# Global log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+LOG_LEVEL     = "INFO"
