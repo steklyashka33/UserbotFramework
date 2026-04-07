@@ -35,17 +35,17 @@ Implemented via the `Account` class in `manager_server/core/account.py`:
 - **Auto-Cleanup**: If a session is banned or revoked, the system automatically calls `logout()`, deleting local files and notifying the Bot via Webhook.
 - **Probe Logic**: Uses `probe_session()` to verify health of stopped sessions before allowing a restart.
 
-### 2. Human-like Behavior (Warm-up)
-New sessions undergo a "warm-up" routine to mimic real Telegram app behavior:
+### 2. Smart Initialization (Warm-up)
+New sessions undergo a "warm-up" routine to ensure stable connection and health:
 - Triggers standard requests like `GetConfig`, `GetAppConfig`, and `GetPrivacy`.
-- Randomized delays between requests prevent instant session flagging by Telegram's anti-spam systems.
+- Prevents instant session flagging by following standard MTProto initialization patterns.
 
 ### 3. Centralized Configuration (`shared/config.py`)
 Single source of truth for the entire system:
 - **Networking**: Support for separate hosts (`MANAGER_HOST`, `BOT_HOST`) allows deploying services on different servers.
-- **Device Masquerading**: 
-    - `USE_UNIQUE_DEVICES`: If True, each session gets a unique device profile that stays persistent (seeded by ID).
-    - `STATIC_DEVICE_CONFIG`: If False, all sessions share a single customizable device fingerprint.
+- **Session Identification**: 
+    - `USE_UNIQUE_DEVICES`: If True, each session gets a unique (but stable) device profile (mimicry mode).
+    - `STATIC_DEVICE_CONFIG`: If False, all sessions identify as "Userbot Framework" for transparency.
 - **Credential Isolation**: Only secrets (`API_ID`, `API_HASH`, `BOT_TOKEN`) stay in `.env`.
 - **Log Control**: `HIDE_API_LOGS` flag to suppress frequent HTTP success logs for cleaner console output.
 

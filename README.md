@@ -14,7 +14,7 @@
 *   ⚙️ **Telethon Userbot Cluster:** Simultaneous support and launch of multiple Telethon-based userbots in real-time.
 *   🛰️ **Distributed Orchestration:** Manager (FastAPI) handles the API and session lifecycle, while the Bot (Aiogram) provides a friendly management UI.
 *   🛡️ **Smart Lifecycle:** OOP-based `Account` class with proactive session health monitoring.
-*   🧠 **Human-like Behavior:** Built-in "warm-up" routine to mimic real Telegram app activity.
+*   🧠 **Smart Initialization:** Built-in "warm-up" routine to ensure stable session registration and health.
 *   🎭 **Anti-Ban Protection:** Unicode-based message obfuscator engine to bypass automated detection systems.
 *   🌐 **Multi-Host Ready:** Centralized networking allowing Bot and Manager to run on different servers.
 *   🚀 **Instant Start:** API ports bind instantly without waiting for session authorization (background Zero-Wait Indexing).
@@ -91,8 +91,8 @@ The project uses a hybrid configuration system for maximum flexibility:
 2.  **shared/config.py**: Single source of truth for all other parameters:
     *   `MANAGER_HOST` / `BOT_HOST`: IP addresses for multi-server deployment.
     *   `MANAGER_PORT` / `BOT_PORT`: Communication ports.
-    *   `USE_UNIQUE_DEVICES`: Toggle between unique (but stable) and static device fingerprints.
-    *   `STATIC_DEVICE_CONFIG`: Fixed device profile used when randomization is disabled.
+    *   `USE_UNIQUE_DEVICES`: Toggle between unique device mimicry and transparent framework identification.
+    *   `STATIC_DEVICE_CONFIG`: Fixed identification profile (e.g., "Userbot Framework") visible in Telegram sessions.
     *   `HIDE_API_LOGS`: Clean terminal mode (hides frequent HTTP logs).
 
 ---

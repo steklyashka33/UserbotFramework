@@ -19,18 +19,19 @@ API_HASH  = os.getenv("API_HASH", "")
 BOT_TOKEN = os.getenv("API_TOKEN", "")
 
 # ──────────────────────────────────────────────────────────────────────────────
-# DEVICE MASQUERADE (Anti-Ban)
+# SESSION IDENTIFICATION
 # ──────────────────────────────────────────────────────────────────────────────
 
-# If True — each session gets its own unique (but stable) device profile.
-# If False — every session uses the STATIC_DEVICE_CONFIG defined below.
-USE_UNIQUE_DEVICES = True
+# If True — each session gets its own unique (but stable) device profile (mimicry).
+# If False — every session identifies as a framework node (transparent identification).
+USE_UNIQUE_DEVICES = False
 
 # Values used when USE_UNIQUE_DEVICES is False
+# These values will be visible in the Telegram "Active Sessions" list.
 STATIC_DEVICE_CONFIG = {
-    "device_model": "Samsung SM-A022G",
-    "system_version": "SDK 31",
-    "app_version": "12.6.2",
+    "device_model": "Userbot Framework",
+    "system_version": "Server Infrastructure",
+    "app_version": "1.1.0",
 }
 
 DEVICE_MODELS = [
