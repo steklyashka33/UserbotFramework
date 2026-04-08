@@ -115,23 +115,16 @@ async def _do_request_code(acc: Account, phone: str, session_id: str) -> dict:
 
 @app.post("/api/auth/send_code")
 async def send_code(req: PhoneRequest):
-    # Precise check: what is the current state of this session?
-
-    # Check memories AND disk. If session exists on disk but missed indexing — load it now.
-    is_on_disk = Account.session_file_exists(req.session_id)
-    if req.session_id in accounts or is_on_disk:
-        if req.session_id not in accounts:
-            # Found on disk but not in memory — initialize and index immediately
-            accounts[req.session_id] = Account(req.session_id, API_ID, API_HASH, on_death=_on_death)
-
-        acc_existing = accounts[req.session_id]
+    try:
+        # 1. Use centralized helper to find/load existing session
+        acc_existing = await _get_or_load_session(req.session_id)
         status = await acc_existing.check_status()
 
         if status == "CONNECTED":
             raise HTTPException(status_code=400, detail="ALREADY_CONNECTED")
 
         elif status == "STOPPED":
-            # File exists but session is not running — probe real health before restarting
+            # Session exists but stopped — check health before deciding to reuse or delete
             probe = await acc_existing.probe_session()
             if probe == "CONNECTED":
                 # Session is healthy and ALREADY authorized
@@ -140,32 +133,23 @@ async def send_code(req: PhoneRequest):
                 return {"status": "resumed", "id": req.session_id}
             elif probe == "NO_NETWORK":
                 raise HTTPException(status_code=503, detail="SESSION_NO_NETWORK")
-            elif probe in ("DEAD", "NOT_AUTHORIZED", "FILE_NOT_FOUND"):
-                # DEAD, NOT_AUTHORIZED or file vanished — clean up and fall through to a fresh login
-                logger.warning(f"Stopped session {req.session_id} is dead or missing (probe={probe}). Cleaning up.")
+            else:
+                # Clean up and fall through to a fresh login
                 await acc_existing.logout()
 
         elif status == "NO_NETWORK":
-            # Session is running but can't reach Telegram right now
             raise HTTPException(status_code=503, detail="SESSION_NO_NETWORK")
 
-        elif status == "FILE_NOT_FOUND":
-            # Object is in memory but file was deleted — purge the ghost
-            logger.warning(f"Ghost session {req.session_id} (no file). Removing from memory.")
-            accounts.pop(req.session_id, None)
-            sessions_hashes.pop(req.session_id, None)
-            # Fall through to create a fresh session below
-
-        elif status in ("DEAD", "NOT_AUTHORIZED"):
-            logger.warning(f"Session {req.session_id} status={status}. Cleaning up.")
-            await acc_existing.logout()
-            # Fall through to create a new session below
-
-        else:  # UNKNOWN_ERROR
-            logger.error(f"Unexpected status '{status}' for session {req.session_id}. Cleaning up.")
+        else:
+            # Clean up and fall through to a fresh login
             await acc_existing.logout()
 
-    # Fresh session creation (if not already handled or if cleanup occurred)
+    except HTTPException as e:
+        if e.status_code != 404:
+            raise e
+        # Case 404: Session does not exist (memory/disk), safe to proceed below
+
+    # Fresh session creation
     acc = Account(req.session_id, API_ID, API_HASH, on_death=_on_death)
     accounts[req.session_id] = acc
     return await _do_request_code(acc, req.phone, req.session_id)
@@ -206,12 +190,33 @@ async def check_exists(session_id: str):
     exists = session_id in accounts or Account.session_file_exists(session_id)
     return {"exists": exists}
 
+async def _get_or_load_session(session_id: str) -> Account:
+    """
+    Standard helper to get a session object.
+    Ensures memory and disk are in sync.
+    Purges from 'accounts' if file vanished.
+    """
+    acc = accounts.get(session_id)
+    is_on_disk = Account.session_file_exists(session_id)
+
+    if not is_on_disk:
+        if acc:
+            logger.warning(f"Purging ghost session {session_id} from memory (no file).")
+            _on_death(session_id)
+        raise HTTPException(status_code=404, detail="SESSION_NOT_FOUND")
+
+    if not acc:
+        # Found on disk but not in memory - initialize
+        acc = Account(session_id, API_ID, API_HASH, on_death=_on_death)
+        accounts[session_id] = acc
+        logger.info(f"Session {session_id} loaded from disk on demand.")
+    
+    return acc
+
 @app.get("/api/sessions/{session_id}/status")
 async def get_status(session_id: str):
     """Check the status of an already running userbot."""
-    acc = accounts.get(session_id)
-    if not acc:
-        raise HTTPException(status_code=404, detail="SESSION_NOT_FOUND")
+    acc = await _get_or_load_session(session_id)
     status = await acc.check_status()
     return {"status": status}
 
@@ -234,26 +239,32 @@ async def list_sessions():
         
     return {"sessions": sid_data}
 
+async def _get_active_session(session_id: str) -> Account:
+    """
+    Ensures session is loaded, running and HAS NETWORK connection.
+    Used for MTProto actions like send_message, get_info.
+    """
+    acc = await _get_or_load_session(session_id)
+    status = await acc.check_status()
+    
+    if status == "CONNECTED":
+        return acc
+    elif status == "STOPPED":
+        raise HTTPException(status_code=409, detail="SESSION_STOPPED")
+    elif status == "NO_NETWORK":
+        raise HTTPException(status_code=503, detail="SESSION_NO_NETWORK")
+    elif status in ("DEAD", "NOT_AUTHORIZED"):
+        # Not triggering _on_death here, let the monitoring loop handle it
+        raise HTTPException(status_code=401, detail="AUTH_REVOKED")
+    else:
+        # Any other status (including UNKNOWN_ERROR) is considered a failure
+        raise HTTPException(status_code=500, detail=f"SESSION_ERROR_{status}")
+
 @app.post("/api/sessions/{session_id}/action/send_message")
 async def send_message_task(session_id: str, req: SendMessageRequest):
     from telethon import errors
-    acc = accounts.get(session_id)
+    acc = await _get_active_session(session_id)
     
-    # 1. Check existence
-    if not acc:
-        raise HTTPException(status_code=404, detail="SESSION_NOT_FOUND")
-    
-    # 2. Check network (VPN/Internet)
-    if not acc.client.is_connected():
-        raise HTTPException(status_code=503, detail="NETWORK_ERROR")
-
-    # 3. Check authorization (is account alive)
-    try:
-        if not await acc.client.is_user_authorized():
-            raise HTTPException(status_code=401, detail="AUTH_REVOKED")
-    except:
-        raise HTTPException(status_code=503, detail="NETWORK_ERROR")
-
     try:
         await acc.client.send_message(req.target, req.text)
         return {"status": "success"}
@@ -266,26 +277,10 @@ async def send_message_task(session_id: str, req: SendMessageRequest):
 @app.get("/api/sessions/{session_id}/info")
 async def session_info(session_id: str):
     """Request detailed account data for a specific userbot."""
-    acc = accounts.get(session_id)
+    acc = await _get_active_session(session_id)
     
-    # 1. Check existence
-    if not acc:
-        raise HTTPException(status_code=404, detail="SESSION_NOT_FOUND")
-    
-    # 2. Check network
-    if not acc.client.is_connected():
-        raise HTTPException(status_code=503, detail="NETWORK_ERROR")
-
-    # 3. Check authorization
     try:
-        if not await acc.client.is_user_authorized():
-            raise HTTPException(status_code=401, detail="AUTH_REVOKED")
-        
         me = await acc.client.get_me()
-        if not me:
-            # If get_me returns None, authorization is lost. 
-            # We don't trigger death cleanup here anymore, let the monitoring loop handle it.
-            raise HTTPException(status_code=401, detail="AUTH_REVOKED")
 
         authorizations = await acc.client(functions.account.GetAuthorizationsRequest())
         auth_list = []
@@ -317,55 +312,39 @@ async def session_info(session_id: str):
 @app.post("/api/sessions/{session_id}/start")
 async def start_session(session_id: str):
     """Start (resume) the userbot via API."""
-    acc = accounts.get(session_id)
+    acc = await _get_or_load_session(session_id)
+    status = await acc.check_status()
     
-    # 1. If already in memory
-    if acc:
-        status = await acc.check_status()
-        if status == "CONNECTED":
-            return {"status": "already_running"}
-        
-        # Re-check disk just in case
-        if not Account.session_file_exists(session_id):
-            _on_death(session_id)
-            raise HTTPException(status_code=404, detail="SESSION_FILE_NOT_FOUND")
-            
+    if status == "CONNECTED":
+        return {"status": "already_running"}
+    elif status == "STOPPED":
         await acc.start()
         return {"status": "success"}
-
-    # 2. If not in memory, try to load from disk
-    if Account.session_file_exists(session_id):
-        acc = Account(session_id, API_ID, API_HASH, on_death=_on_death)
-        accounts[session_id] = acc
-        await acc.start()
-        return {"status": "success"}
-
-    raise HTTPException(status_code=404, detail="SESSION_NOT_FOUND")
+    elif status == "NO_NETWORK":
+         # Already running but in network wait
+         return {"status": "already_running_no_network"}
+    elif status in ("DEAD", "NOT_AUTHORIZED"):
+         raise HTTPException(status_code=401, detail="AUTH_REVOKED")
+    else:
+        raise HTTPException(status_code=400, detail=f"CANNOT_START_STATUS_{status}")
 
 @app.post("/api/sessions/{session_id}/stop")
 async def stop_session(session_id: str):
     """Stop the userbot via API."""
-    acc = accounts.get(session_id)
-
-    if acc:
-        await acc.stop()
-        return {"status": "success"}
+    acc = await _get_or_load_session(session_id)
     
-    if Account.session_file_exists(session_id):
-        acc = Account(session_id, API_ID, API_HASH, on_death=_on_death)
-        accounts[session_id] = acc
+    if not acc.is_running:
         return {"status": "already_stopped"}
-    
-    raise HTTPException(status_code=404, detail="SESSION_NOT_FOUND")
+        
+    await acc.stop()
+    return {"status": "success"}
 
 @app.post("/api/sessions/{session_id}/logout")
 async def logout_session(session_id: str):
     """Logout from account and delete the session."""
-    acc = accounts.get(session_id)
-    if not acc:
-        raise HTTPException(status_code=404, detail="SESSION_NOT_FOUND")
+    acc = await _get_or_load_session(session_id)
     await acc.logout()
-    del accounts[session_id]
+    _on_death(session_id)
     return {"status": "success"}
 
 if __name__ == "__main__":
