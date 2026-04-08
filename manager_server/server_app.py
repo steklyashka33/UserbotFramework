@@ -74,7 +74,7 @@ async def _load_accounts_bg():
                     acc = Account(session_id, API_ID, API_HASH, on_death=_on_death)
                     accounts[session_id] = acc
                     await acc.start()
-                    logger.info(f"Account {session_id} is connected.")
+                    logger.info(f"Account {session_id} is connecting...")
                     loaded_count += 1
                 except Exception as e:
                     logger.error(f"Initialization error for {session_id}: {type(e).__name__} - {e}")
@@ -229,7 +229,9 @@ async def list_sessions():
         acc = accounts[sid]
         status = await acc.check_status()
         
-        if status in ("DEAD", "FILE_NOT_FOUND"):
+        if status == "DEAD":
+            await acc.logout()
+        elif status == "FILE_NOT_FOUND":
             _on_death(sid)
         else:
             sid_data.append({
