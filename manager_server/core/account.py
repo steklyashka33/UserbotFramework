@@ -185,10 +185,16 @@ class Account:
     async def probe_session(self) -> str:
         """
         Probe the real health of a stopped session by connecting and checking auth.
-        Unlike check_status(), ignores is_running — always connects and verifies.
+        Unlike check_status(), this method ignores the 'is_running' flag and performs
+        an active network probe to verify if the session is still valid.
 
-        Used before restarting a STOPPED session to avoid restarting a dead one.
-        Returns: 'CONNECTED', 'NO_NETWORK', 'NOT_AUTHORIZED', 'DEAD', 'FILE_NOT_FOUND', 'UNKNOWN_ERROR'.
+        Returns one of:
+          - 'CONNECTED'       – successfully connected and authorized
+          - 'NO_NETWORK'      – failed to connect to Telegram servers
+          - 'NOT_AUTHORIZED'  – connected, but login is incomplete or not started
+          - 'DEAD'            – session revoked or account banned
+          - 'FILE_NOT_FOUND'  – session file vanished from disk
+          - 'UNKNOWN_ERROR'   – unexpected non-network, non-auth error occurred
         """
         if not self.session_file_exists(self.session_id):
             return "FILE_NOT_FOUND"
@@ -207,7 +213,7 @@ class Account:
             logger.error(f"Unexpected error in probe_session for {self.session_id}: {type(e).__name__} - {e}")
             return "UNKNOWN_ERROR"
 
-    async def ensure_alive(self) -> bool:
+    async def ensure_alive(self) -> str:
         """
         Active check: returns True if the session DIED and cleanup was performed,
         False if the session is still alive.
@@ -217,8 +223,7 @@ class Account:
         death_reason = await self._check_death_reason()
         if death_reason:
             await self._handle_death(reason=death_reason)
-            return True
-        return False
+        return death_reason
 
     # ──────────────────────────────────────────────
     # Monitoring loop
