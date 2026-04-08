@@ -71,6 +71,11 @@ Standardized via `shared/logging_utils.py`:
 ---
 
 ## 🚀 Potential Paths for Scaling
-1. **Database Integration**: Replace the in-memory `accounts` dictionary with Redis/PostgreSQL for persistent metadata storage.
-2. **Proxy Management**: Extend `Account` to support individual proxies per session for large-scale operations.
-3. **Advanced Obfuscation**: Implement dynamic grammar-based or AI-driven text rewriting.
+1. **User Ownership & Isolation**: Upon further development on top of this framework, clarify if commands should be strictly restricted to the session owner's ID (e.g., preventing users from manipulating other users' sessions).
+2. **Session Wait-Time Management**: Implement a 10-minute timer for /login in the Bot server. 
+    - If the code is not entered within 10 minutes, notify the user that the wait time has expired and the code must be requested again. 
+    - Clear the Bot's FSM state and notify the Manager to purge the session (calling `_on_death`). 
+    - Cancel the timer if the code is successfully entered.
+3. **Database Integration**: Replace the in-memory `accounts` dictionary with Redis/PostgreSQL for persistent metadata storage.
+4. **Proxy Management**: Extend `Account` to support individual proxies per session for large-scale operations.
+5. **Advanced Obfuscation**: Implement dynamic grammar-based or AI-driven text rewriting.
