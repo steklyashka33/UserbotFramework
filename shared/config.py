@@ -50,7 +50,7 @@ if _missing:
 
 # If True — each session gets its own unique (but stable) device profile (mimicry).
 # If False — every session identifies as a framework node (transparent identification).
-USE_UNIQUE_DEVICES = False
+USE_UNIQUE_DEVICES = True
 
 # Values used when USE_UNIQUE_DEVICES is False
 # These values will be visible in the Telegram "Active Sessions" list.
