@@ -38,6 +38,7 @@ async def start_cmd(message: Message):
         "📋 /sessions — List of all active accounts (by ID)\n"
         "ℹ️ /info [id] — Get account data. Takes your ID by default (e.g., /info 1234567)\n"
         "📨 /ping [id] — [TEST] Send task: write to 'Saved Messages'.\n"
+        "🛑 /stop [id] — Temporary stop of the active session.\n"
         "❌ /logout [id] — Logout from account and delete session."
     )
 
@@ -48,6 +49,7 @@ async def login_cmd(message: Message, state: FSMContext):
     
     # Pre-check: maybe this user is already connected?
     data, status_code = await _manager_request(f"/api/sessions/{user_id}/status")
+    
     if status_code == 200:
         current_status = data.get("status")
         if current_status == "CONNECTED":
@@ -55,24 +57,13 @@ async def login_cmd(message: Message, state: FSMContext):
             return
         elif current_status == "STOPPED":
             # Just start it!
-            _, s_status = await _manager_request(f"/api/sessions/{user_id}/start", method="POST")
-            if s_status == 200:
-                await message.answer("⚡ **Your userbot was stopped but now it is successfully restarted and running!**", parse_mode="Markdown")
-                return
-            elif s_status == 404:
-                # Session vanished between checks? Just proceed to login
-                pass
-            elif s_status == 0:
-                await message.answer("⚠️ Manager server is completely unavailable. Cannot restart session.")
-                return
-            else:
-                await message.answer("❓ **Failed to restart your session.**\nTry to manually /login again.", parse_mode="Markdown")
-                return
-    elif status_code in (0, 408, 503):
-        # Network issues during status check
-        if status_code == 0: await message.answer("⚠️ Manager server is completely unavailable.")
-        elif status_code == 408: await message.answer("⏳ Status check timed out. Please try again.")
-        elif status_code == 503: await message.answer("📡 Network error while checking status.")
+            data, status = await _manager_request(f"/api/sessions/{user_id}/start", method="POST")
+            if await _handle_manager_error(message, status, data, str(user_id)):
+                 await message.answer("⚡ **Your userbot was stopped but now it is successfully restarted and running!**", parse_mode="Markdown")
+                 return
+    elif status_code != 404:
+        # Not success and not "session not found" — handle as standard manager error
+        await _handle_manager_error(message, status_code, data, str(user_id))
         return
 
     text = obfuscate("To connect your account, send your phone number by pressing the button below. We verify that the contact belongs to you.")
@@ -131,6 +122,39 @@ async def _manager_request(endpoint: str, method: str = "GET", payload: dict = N
         logger.error(f"Manager API Unexpected Error ({endpoint}): {type(e).__name__} - {e}")
         return None, 0
 
+async def _handle_manager_error(message: Message, status: int, data: dict, session_id: str) -> bool:
+    """
+    Centralized handler for all session-related Manager errors.
+    Returns True if SUCCESS (200), False if HANDLED ERROR (message sent).
+    """
+    if status == 200:
+        return True
+        
+    if status == 0:
+        await message.answer("⚠️ Manager server is completely unavailable.")
+    elif status == 408:
+        await message.answer("⏳ Request to Manager timed out. Server might be busy.")
+    elif status == 404:
+        await message.answer(f"❌ Userbot ({session_id}) **not found**. Use /login", parse_mode="Markdown")
+    elif status == 401:
+        await message.answer(f"⚠️ **Access lost!** Session ({session_id}) was revoked or banned. Remove it (/logout) and login again.", parse_mode="Markdown")
+    elif status == 409:
+        await message.answer(f"💤 Your userbot ({session_id}) is **stopped**. Use /login to restart it.", parse_mode="Markdown")
+    elif status == 503:
+        detail = data.get("detail") if isinstance(data, dict) else None
+        if detail == "SESSION_NO_NETWORK":
+             await message.answer(f"📡 Userbot ({session_id}) is active, but **no connection** to Telegram (proxy/network issue).", parse_mode="Markdown")
+        else:
+             await message.answer(f"📡 Manager reported a **network error**. Check server logs.", parse_mode="Markdown")
+    elif status == 429:
+        detail = data.get("detail", "Wait a moment") if isinstance(data, dict) else "Wait a moment"
+        await message.answer(f"⏳ **Telegram limit:** {detail}")
+    else:
+        detail = data.get("detail", "Unknown error") if isinstance(data, dict) else "Unknown"
+        await message.answer(f"❌ Manager error ({status}): {detail}")
+    
+    return False
+
 @router.message(AuthState.waiting_for_phone)
 async def process_phone(message: Message, state: FSMContext):
     """Got phone, sending request to Manager Server."""
@@ -153,7 +177,7 @@ async def process_phone(message: Message, state: FSMContext):
     # Step 1 REST API: Code request
     data, status = await _manager_request("/api/auth/send_code", method="POST", payload={"phone": phone, "session_id": session_id})
     
-    if status == 200:
+    if await _handle_manager_error(message, status, data, session_id):
         if data.get("status") == "resumed":
             try: await wait_msg.delete() 
             except: pass
@@ -171,24 +195,6 @@ async def process_phone(message: Message, state: FSMContext):
         await message.answer(text, reply_markup=get_code_kb(), parse_mode="Markdown")
         await state.set_state(AuthState.waiting_for_code)
     else:
-        if status == 0:
-            await wait_msg.answer("⚠️ Manager server API is completely unavailable.")
-        elif status == 408:
-            await wait_msg.answer("⏳ Request to Manager timed out. Server might be busy.")
-        elif status == 503:
-            await wait_msg.answer("📡 Network error connecting to Manager API.")
-        else:
-            detail = data.get('detail', 'Unknown error') if data else 'Empty response'
-            if detail == "ALREADY_CONNECTED":
-                await wait_msg.answer("✅ Your session is already connected!")
-            elif detail == "SESSION_STOPPED":
-                await wait_msg.answer("⚠️ Your session exists but is currently stopped. Use /logout to remove it, then /login again.")
-            elif detail == "SESSION_NO_NETWORK":
-                await wait_msg.answer("⚠️ Your session is running but Telegram is temporarily unreachable. Please try again in a moment.")
-            elif detail == "FAILED_TO_CONNECT":
-                await wait_msg.answer("❌ Could not connect to Telegram servers. Please check your connection and try /login again.")
-            else:
-                await wait_msg.answer(f"Server error: {detail}")
         await state.clear()
 
 @router.callback_query(AuthState.waiting_for_code, lambda c: c.data.startswith("code_"))
@@ -341,7 +347,7 @@ async def get_info_cmd(message: Message):
     
     data, status = await _manager_request(f"/api/sessions/{session_id}/info")
     
-    if status == 200:
+    if await _handle_manager_error(message, status, data, session_id):
         username = f"@{data.get('username')}" if data.get('username') else "missing"
         
         info_text = (
@@ -391,15 +397,6 @@ async def get_info_cmd(message: Message):
                         info_text += "\n"
         
         await message.answer(info_text, parse_mode="Markdown")
-    else:
-        if status == 0:
-            await message.answer("⚠️ Manager server is completely unavailable.")
-        elif status == 408:
-            await message.answer("⏳ Info request timed out.")
-        elif status == 503:
-            await message.answer("📡 Network error while fetching info.")
-        else:
-            await message.answer(f"Session with ID {session_id} not found or offline.")
 
 @router.message(Command("ping"))
 async def send_ping_cmd(message: Message):
@@ -413,24 +410,8 @@ async def send_ping_cmd(message: Message):
     
     data, status = await _manager_request(f"/api/sessions/{session_id}/action/send_message", method="POST", payload=payload)
     
-    if status == 200:
+    if await _handle_manager_error(message, status, data, session_id):
         await message.answer(f"✅ Task successfully sent to userbot ({session_id})!")
-    elif status == 404:
-        await message.answer(f"❌ Userbot ({session_id}) **is not bound** to an account. Use /login", parse_mode="Markdown")
-    elif status == 401:
-        await message.answer(f"⚠️ **Access lost!** Session ({session_id}) was revoked or banned. Remove it (/logout) and login again.", parse_mode="Markdown")
-    elif status == 429:
-        detail = data.get("detail", "Too many requests") if isinstance(data, dict) else data
-        await message.answer(f"⏳ **Telegram limit:** {detail}")
-    elif status == 503:
-        await message.answer(f"⚠️ Userbot ({session_id}) is bound, but **no network**.", parse_mode="Markdown")
-    elif status == 408:
-        await message.answer(f"⏳ Task request timed out.")
-    elif status == 0:
-        await message.answer(f"Manager server is completely unavailable.")
-    else:
-        detail = data.get("detail", "Unknown error") if isinstance(data, dict) else data
-        await message.answer(f"❌ Error sending task for {session_id}: {detail}")
 
 @router.message(Command("logout"))
 async def send_logout_cmd(message: Message):
@@ -465,7 +446,7 @@ async def stop_cmd_bot(message: Message):
         if resp_status == "already_stopped":
             await wait_msg.edit_text(f"ℹ️ Your {obfuscate('userbot')} is already stopped.")
         elif resp_status == "success":
-            await wait_msg.edit_text(f"🛑 Your {obfuscate('userbot')} has been successfully stopped.\n\nUse /login to restart it.")
+            await wait_msg.edit_text(f"🛑 Your {obfuscate('userbot')} has been successfully stopped.\nUse /login to restart it.")
         else:
             await wait_msg.edit_text(f"❓ Manager returned unexpected status: `{resp_status}`", parse_mode="Markdown")
     elif status == 404:
