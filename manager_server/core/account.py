@@ -138,28 +138,39 @@ class Account:
         try:
             me = await self.client.get_me()
             if me is None:
-                # Key exists but user data is inaccessible
+                # Account not accessible — verify if it was ever authorized
                 authorized = await self.client.is_user_authorized()
-                return "auth_revoked" if authorized else "login_incomplete"
-            return False  # Session is alive
+                reason = "auth_revoked" if authorized else "login_incomplete"
+                logger.debug(f"[death_check] {self.session_id}: get_me=None, authorized={authorized} -> {reason}")
+                return reason
+            return False  # Session is alive and authorized
         except (UserDeactivatedError, UserDeactivatedBanError):
             return "banned"
         except (AuthKeyUnregisteredError, SessionRevokedError):
             return "auth_revoked"
+        except NETWORK_ERRORS:
+             # Network issues are handled by ensure_connected(), not death detection
+             return False
         except Exception as e:
-            # Check for death keywords in generic Telethon strings
+            # Fallback patterns for Telethon exception strings
             err_str = str(e).lower()
             if any(k in err_str for k in ["deactivated", "banned"]):
                 return "banned"
             if any(k in err_str for k in ["auth", "revoked", "unregistered"]):
                 return "auth_revoked"
-            # Some other non-critical error — let the monitoring loop continue
+                
+            logger.error(f"Unexpected check failure for {self.session_id}: {type(e).__name__} - {e}")
             return False
+
+    @staticmethod
+    def get_session_path(session_id: str) -> Path:
+        """Helper to get the absolute path to the .session file."""
+        return BASE_DIR / "sessions" / f"{session_id}.session"
 
     @staticmethod
     def session_file_exists(session_id: str) -> bool:
         """Check whether the .session file exists on disk."""
-        return (BASE_DIR / "sessions" / f"{session_id}.session").exists()
+        return Account.get_session_path(session_id).exists()
 
     async def check_status(self) -> str:
         """
@@ -391,11 +402,18 @@ class Account:
             pass  # Best-effort: even if Telegram is unreachable, we still clean up locally
         finally:
             await self.client.disconnect()
-
-            # Delete file
-            session_file = BASE_DIR / "sessions" / f"{self.session_id}.session"
+            
+            # Delete file with retries
+            session_file = Account.get_session_path(self.session_id)
             if session_file.exists():
-                try:
-                    session_file.unlink()
-                except Exception as e:
-                    logger.error(f"Failed to delete session file {self.session_id} on logout: {type(e).__name__} - {e}")
+                for attempt in range(5):
+                    try:
+                        session_file.unlink()
+                        logger.info(f"Session file {self.session_id} deleted successfully.")
+                        break
+                    except Exception as e:
+                        if attempt < 4:
+                            logger.warning(f"Retrying session file deletion ({attempt+1}/5) for {self.session_id} due to: {e}")
+                            await asyncio.sleep(.5)
+                        else:
+                            logger.error(f"Failed to delete session file {self.session_id} after retries: {type(e).__name__} - {e}")
