@@ -32,43 +32,31 @@ INVISIBLE_SEPARATOR = "\u200b"
 
 def obfuscate(text: str) -> str:
     """
-    Enhanced obfuscation 'from the depths of unicode'.
-    Uses random character substitution from different language blocks
-    and inserts invisible separators into trigger words.
+    Enhanced selective obfuscation for UserbotFramework.
+    Only applies character substitution and invisible separators to identified 'trigger' words.
     """
-    # List of dangerous words to break with invisible characters
-    triggers = ["code", "password", "auth", "login", "telegram", "confirm", "код", "пароль", "авторизация", "подтверждение"]
+    triggers = ["code", "password", "auth", "login", "telegram", "confirm", "код", "пароль", "авторизация", "подтверждение", "miyobi"]
     
-    # 1. Break triggers using invisible separators first
-    result_text = text
-    for word in triggers:
-        # Search for trigger word in any case
-        start_idx = result_text.lower().find(word)
-        while start_idx != -1:
-            original_word = result_text[start_idx:start_idx + len(word)]
-            # Insert invisible separator only BETWEEN characters
-            broken_word = INVISIBLE_SEPARATOR.join(list(original_word))
-            
-            # If the trigger is at the very start of the text, 
-            # make sure we don't start with a special character if possible,
-            # but join already handles this by putting it between elements.
-            # However, some UI engines fail if the first segment is complex.
-            
-            result_text = result_text[:start_idx] + broken_word + result_text[start_idx + len(word):]
-            start_idx = result_text.lower().find(word, start_idx + len(broken_word))
+    import re
+    
+    def replace_word(match):
+        word = match.group(0)
+        # 1. Insert invisible separators
+        broken = INVISIBLE_SEPARATOR.join(list(word))
+        
+        # 2. Substitute characters
+        substituted = []
+        for char in broken:
+            low_char = char.lower()
+            if low_char in DEEP_UNICODE:
+                if random.random() > 0.5:
+                    variant = random.choice(DEEP_UNICODE[low_char])
+                    substituted.append(variant.upper() if char.isupper() else variant)
+                else:
+                    substituted.append(char)
+            else:
+                substituted.append(char)
+        return "".join(substituted)
 
-    # 2. Character-by-character replacement with visually similar ones from Deep Unicode
-    final_result = []
-    for char in result_text:
-        low_char = char.lower()
-        if low_char in DEEP_UNICODE:
-            # Choose a random variant for the current letter
-            variant = random.choice(DEEP_UNICODE[low_char])
-            # Preserve case
-            if char.isupper():
-                variant = variant.upper()
-            final_result.append(variant)
-        else:
-            final_result.append(char)
-            
-    return "".join(final_result)
+    pattern = re.compile("|".join(re.escape(word) for word in triggers), re.IGNORECASE)
+    return pattern.sub(replace_word, text)
